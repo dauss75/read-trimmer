@@ -1,2 +1,2 @@
 # read-trimmer
-Paired trimmer for QIASeq DNA/RNA reads 
+Paired end trimmer for QIASeq DNA/RNA reads 
