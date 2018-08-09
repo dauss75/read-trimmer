@@ -145,17 +145,19 @@ class Trimmer(object):
         self._r = 30
 
         # other constants
-        self._revcomp_table = bytes.maketrans(b"ACTG", b"TGAC")
-        self._padding       = 5
+        self._revcomp_table             = bytes.maketrans(b"ACTG", b"TGAC")
+        self._padding                   = 5
+        self._custom_sequencing_adapter = b"AATGTACAGTATTGCGTTTTG"
         
     # kmer size
     @property
     def k(self):
-        return self._k        
+        return self._k
     @k.setter
     def k(self,val):
         assert isinstance(val,int),"Please specify an integer value for k"
-        self._k = val        
+        self._k = val
+        
     # how much of read sequence to use
     @property
     def r(self):
@@ -164,6 +166,20 @@ class Trimmer(object):
     def r(self,val):
         assert isinstance(val,int),"Please specify an integer value for k"
         self._r = val
+
+    def custom_sequencing_adapter_check(self,r1_seq):
+        ''' Check for custom sequencing adapter on r1
+        :param bytes r1_seq: R1 sequence
+        :rtype int
+        :returns end pos of adapter, -1 if not found
+        '''
+        alignment = edlib.align(self._custom_sequencing_adapter,
+                                r1_seq[0:len(self._custom_sequencing_adapter)+4],
+                                mode="SHW",task="locations")
+        if float(alignment["editDistance"])/len(self._custom_sequencing_adapter) <= 0.18:
+            return alignment["locations"][-1][1]
+        else:
+            return -1
 
     def primer_trim(self,primer_datastruct,r1_seq):
         ''' Trim primer to said bases if present on read, account for certain mismatch
@@ -248,6 +264,7 @@ class Trimmer(object):
                  (-1,-1) if no alignment within mismatch rate
         '''  
         query = self.revcomp(r2_seq[self.synthetic_oligo_len:self.synthetic_oligo_len+self.overlap_check_len])
+        assert len(query) != 0,"{r1_seq}\t{r2_seq}".format(r1_seq=r1_seq.decode("ascii"),r2_seq=r2_seq.decode("ascii"))  # edlib hangs forever on empty strings     
         alignment = edlib.align(query,r1_seq,mode="HW",task="locations")
 
         if float(alignment["editDistance"])/self.overlap_check_len <= 0.12:
@@ -259,7 +276,10 @@ class Trimmer(object):
         '''
         '''
         query = self.revcomp(r1_seq[primer_end+1:primer_end+1+self.overlap_check_len])
+        assert len(query) != 0,"{r1_seq}\t{primer_end}\t{r2_seq}".format(r1_seq=r1_seq.decode("ascii"),primer_end=primer_end,r2_seq=r2_seq.decode("ascii"))        
         alignment = edlib.align(query,r2_seq,mode="HW",task="locations")
+
+        
         if float(alignment["editDistance"])/self.overlap_check_len <= 0.12:
             return alignment["locations"][-1]
         else:
