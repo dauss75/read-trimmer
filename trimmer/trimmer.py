@@ -14,6 +14,7 @@ class PrimerDataStruct(object):
         '''
         '''
         self.primer_file = kwargs["primer_file"]
+        self.cdhit_est   = kwargs["cdhit_est"]
         self.k = kwargs["k"]
 
         self._cdhit_fasta      =   self.primer_file + ".fasta"
@@ -59,7 +60,8 @@ class PrimerDataStruct(object):
         )
         subprocess.check_call(cmd1,shell=True)
         # run cd-hit
-        cmd2 = "/srv/qgen/bin/downloads/cd-hit-v4.6.8-2017-1208/cd-hit-est -i {fasta} -o {out_prefix}".format(
+        cmd2 = "{cdhit_est} -i {fasta} -o {out_prefix}".format(
+            cdhit_est = self.cdhit_est,
             fasta = self._cdhit_fasta,
             out_prefix = self._cdhit_out_prefix)
         subprocess.check_call(cmd2,shell=True)
