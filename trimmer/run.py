@@ -1,7 +1,8 @@
 import argparse
 import os
+import multiprocessing
 
-import trimmer.qiaseq_trimmer
+import qiaseq_trimmer
 
 def init_parser():
     '''
@@ -20,15 +21,15 @@ def init_parser():
     parser.add_argument("--tagname_umi", default = "mi", help = "Tag name for UMI sequence")
     parser.add_argument("--synthetic_oligo_len", required = True, type = int, help = "Length of synthetic region on R2 5' end")
     parser.add_argument("--overlap_check_len", default = 25, type = int, help = "Sequence length for overlap check")
-    parser.add_argument("--ncpu", default = 32, type = int, help = "Number of CPUs to use")
+    parser.add_argument("--ncpu", default = multiprocessing.cpu_count(), type = int, help = "Number of CPUs to use")
     parser.add_argument("--max_mismatch_rate_overlap", default = 0.12, type = float, help = "Mismatch rate to tolerate for overlap check")
     parser.add_argument("--max_mismatch_rate_primer", default = 0.12, type = float, help = "Mismatch rate to tolerate for primer identification")
-    parser.add_argument("--cdhit_est", help = "Path to cd-hit-est program",default=os.path.join(os.path.dirname(os.path.abspath(__file__)),"lib/cd-hit-est"))
+    parser.add_argument("--cdhit_est", help = "Path to cd-hit-est program",default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),"lib/cd-hit-est"))
 
 def main(args):
     '''
     '''
-    trimmer.qiaseq_trimmer.main(args)
+    qiaseq_trimmer.main(args)
     
 if __name__ == "__main__":
     init_parser()
