@@ -84,10 +84,10 @@ class PrimerDataStruct(object):
                 contents = line.strip("\n\r").split("\t")
                 primer   = contents[-1]
                 if primer in self._primer_info:
-                    temp = [primer_id,[]]
+                    temp = [str(primer_id),[]]
                     self._primer_info[primer].append(temp) # store exact matching primers in the same value bucket
                 else:
-                    temp = [primer_id,[]] # empty list for clustered primers from cd-hit
+                    temp = [str(primer_id),[]] # empty list for clustered primers from cd-hit
                     self._primer_info[primer] = [temp]
 
                     # create k-mer index
@@ -125,17 +125,19 @@ class Trimmer(object):
     '''
     def __init__(self,*args,**kwargs):
         ''' Class constructor
-        '''
+        '''        
         # user must provide
-        self.instrument = kwargs["instrument"]
-        self.max_mismatch_rate_primer = kwargs["max_mismatch_rate_primer"]
+        self.is_nextseq                = kwargs["is_nextseq"]            
+        self.max_mismatch_rate_primer  = kwargs["max_mismatch_rate_primer"]
         self.max_mismatch_rate_overlap = kwargs["max_mismatch_rate_overlap"]
-        self.synthetic_oligo_len = kwargs["synthetic_oligo_len"]
-        self.overlap_check_len = kwargs["overlap_check_len"]
+        self.synthetic_oligo_len       = kwargs["synthetic_oligo_len"]
+        self.overlap_check_len         = kwargs["overlap_check_len"]
+        self.tagname_umi               = kwargs["tagname_umi"]
+        self.tagname_primer            = kwargs["tagname_primer"]
         
         # user can provide, if not defaults used
         self.trim_polyA = True if "polyA_trim" in kwargs else False
-        self.primer_side_check = True if "primer_side_check" in kwargs else False
+        self.check_primer_side = True if "check_primer_side" in kwargs else False
         self.flip_R1_R2 = True if "flip_R1_R2" in kwargs else False
 
         # user can overide these defaults if needed
@@ -144,24 +146,24 @@ class Trimmer(object):
 
         # other constants
         self._revcomp_table = bytes.maketrans(b"ACTG", b"TGAC")
-        self._padding = 5
-
+        self._padding       = 5
+        
     # kmer size
     @property
-    def k(self,val):
+    def k(self):
         return self._k        
     @k.setter
     def k(self,val):
         assert isinstance(val,int),"Please specify an integer value for k"
-        self._k = val
+        self._k = val        
     # how much of read sequence to use
     @property
-    def r(self,val):
+    def r(self):
         return self._r        
     @r.setter
     def r(self,val):
         assert isinstance(val,int),"Please specify an integer value for k"
-        self._r = val        
+        self._r = val
 
     def primer_trim(self,primer_datastruct,r1_seq):
         ''' Trim primer to said bases if present on read, account for certain mismatch
@@ -177,27 +179,30 @@ class Trimmer(object):
         
         # unpack argument
         primer_info, primer_kmer = primer_datastruct
-
-        for oligo in set("".join(itertools.islice(r1_seq[0:self._r].decode(),i,i+self._k)) for i in range(len(r1_seq[0:self._r])+1-self._k)):
-            if oligo in primer_kmer[oligo]:
-                candidates.add(c)
-                for similar_primer in primers[c][-1]: # iterate over all similar primers to this primer
-                    candidates.add(similar_primer)
+        
+        temp = r1_seq[0:self._r].decode("ascii")
+        for oligo in set("".join(itertools.islice(temp,i,i+self._k))
+                         for i in range(self._r+1-self._k)):
+            if oligo in primer_kmer:
+                for c in primer_kmer[oligo]:
+                    candidates.add(c)
+                    for similar_primer in primer_info[c][0][1]: # iterate over all similar primers to this primer
+                        candidates.add(similar_primer)
+        
         if len(candidates) == 0: # no hits in the index, exhaustive search over all primers
             candidates = primer_info
-            
         num_candidates = len(candidates)
         
         for primer in candidates:
             primer_len = len(primer)
             if r1_seq[0:primer_len] == primer and num_candidates == 1: # exact match and no other primers to check
-                return (primer_len,primer,0)
+                return (primer_len,primer,0,0)
             
             alignment = edlib.align(primer,r1_seq[0:len(primer)+self._padding],mode="SHW")
             editdist  = alignment["editDistance"]
             score     = float(editdist)/primer_len
 
-            if best_score == None or score < best_score:
+            if best_score is None or score < best_score:
                 best_align      = alignment
                 best_primer     = primer
                 best_score      = score
@@ -211,33 +216,59 @@ class Trimmer(object):
                     best_editdist   = editdist
                     best_primer_len = primer_len
 
-        assert best_score != None
+        assert best_score is not None
             
         if best_score <= self.max_mismatch_rate_primer:
             return (best_align["locations"][-1][1], best_primer, best_editdist, best_score) # return 0 based position where primer ends on the read
         else:
-            return (None,None,-1,-1)
+            return (-1,None,-1,-1)
+        
+
+    '''                   Overlap checks
+
+         Primer  
+         ======--------------------------=====>        R1
+               xxxxxx
+                                   xxxxxx 
+           <===--------------------------========      R2
+                                      UMI (synthetic side)
+
+           ===   : the synthetic part we want to trim
+           xxx   : the regions checked for overlap of R1 and R2
+           ---   : endogenous read sequence
+
+    '''    
         
     def synthetic_side_check(self,r1_seq,r2_seq):
-        '''
-        '''
+        ''' Check for overlap between R1 and R2 on the synthetic/UMI side
+        :param bytes/str r1_seq: R1 read sequence
+        :param bytes/str r2_seq: R2 read sequence
+        :rtype tuple
+        :returns (start,end) pos on R1 (0-based coordinates) 
+                 (-1,-1) if no alignment within mismatch rate
+        '''  
         query = self.revcomp(r2_seq[self.synthetic_oligo_len:self.synthetic_oligo_len+self.overlap_check_len])
         alignment = edlib.align(query,r1_seq,mode="HW",task="locations")
+
         if float(alignment["editDistance"])/self.overlap_check_len <= 0.12:
             return alignment["locations"][-1]
         else:
             return (-1,-1)
         
-    def primer_side_check(self,r1_seq,r2_seq):
+    def primer_side_check(self,primer_end,r1_seq,r2_seq):
         '''
         '''
-        #query = revcomp(r1_seq[self.primer_end_pos:
-        pass
+        query = self.revcomp(r1_seq[primer_end+1:primer_end+1+self.overlap_check_len])
+        alignment = edlib.align(query,r2_seq,mode="HW",task="locations")
+        if float(alignment["editDistance"])/self.overlap_check_len <= 0.12:
+            return alignment["locations"][-1]
+        else:
+            return (-1,-1)        
         
-    def quality_trim_(self,qual_string,seq_string,cutoff,is_nextseq,base=33):
-        return quality_trim(qual_string.decode("ascii"),seq_string.decode("ascii"),cutoff,is_nextseq,base)
+    def quality_trim_(self,qual_string,seq_string,cutoff,base=33):
+        return quality_trim(qual_string.decode("ascii"),seq_string.decode("ascii"),cutoff,self.is_nextseq,base)
 
     def revcomp(self,seq):
-        '''
+        ''' Reverse complement a sequence
         '''
         return seq.translate(self._revcomp_table)[::-1]
