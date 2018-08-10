@@ -98,6 +98,13 @@ class QiaSeqTrimmer(Trimmer):
             umi = r2_seq[1:13]            
             self.synthetic_oligo_len += 1
 
+        # trim custom sequencing adapter if needed
+        r1_trim_start = self.custom_sequencing_adapter_check(r1_seq)
+        # update r1
+        if r1_trim_start != -1:
+            r1_seq = r1_seq[r1_trim_start+1:]
+            r1_qual = r1_qual[r1_trim_start+1:]
+        
         # quality trimming        
         r1_qual_end = self.quality_trim_(r1_qual,r1_seq,14)
         r2_qual_end = self.quality_trim_(r2_qual,r2_seq,14)
@@ -220,6 +227,7 @@ def trim_custom_sequencing_adapter(args,buffers):
                              synthetic_oligo_len = args.synthetic_oligo_len,
                              overlap_check_len = args.overlap_check_len,
                              check_primer_side = args.check_primer_side,
+                             trim_custom_seq_adapter = False,
                              primer3_R1 = args.primer3_bases_R1,
                              primer3_R2 = args.primer3_bases_R2,
                              tagname_umi = args.tagname_umi,
@@ -253,6 +261,7 @@ def wrapper_func(args,buffers):
                              synthetic_oligo_len = args.synthetic_oligo_len,
                              overlap_check_len = args.overlap_check_len,
                              check_primer_side = args.check_primer_side,
+                             trim_custom_seq_adapter = args.to_trim_custom_adapter,
                              primer3_R1 = args.primer3_bases_R1,
                              primer3_R2 = args.primer3_bases_R2,
                              tagname_umi = args.tagname_umi,
@@ -417,7 +426,6 @@ def close_fh(fh1,fh2):
 def main(args):
     '''
     '''
-    logger.info("\nRunning program with args : {}\n".format(args))
     # unpack some params
     primer_file = args.primer_file
     r1          = args.r1
@@ -448,9 +456,10 @@ def main(args):
     
     logger.info("Checked first {n} reads for custom sequencing adapter.".format(n=num_reads))
     if to_trim_custom_adapter:
-        logger.info("Custom sequencing adapter present in > 95% reads. Please trim it and feed the input the qiaseq_trimmer. This feature will be implemented soon.")
-        sys.exit(-1)
-
+        logger.info("Custom sequencing adapter present in > 95% reads")
+        #sys.exit(-1)
+    args.to_trim_custom_adapter = to_trim_custom_adapter
+    logger.info("\nRunning program with args : {}\n".format(args))
     close_fh(f,f2)
     
     num_r1_primer_trimmed = 0
@@ -515,8 +524,8 @@ def main(args):
         "Num R2 reads primer trimmed : {num_r2_pr_trimmed}",
         "Num R1 reads synthetic side trimmed : {num_syn_trimmed}",
         "Num read fragments overlapping : {num_overlap}",
-        "Num read fragments dropped too short : {too_short}",
-        "Num read fragments dropped odd structure (R1 has only primer sequence) : {odd}",
+        "Num read fragments dropped too short (R1 or R2 < 50 bp after qual trimming) : {too_short}",
+        "Num read fragments dropped odd structure (usually R1 has only primer sequence) : {odd}",
         "Avg num bases qual trimmed R1 : {qual_trim_r1}",
         "Avg num bases qual trimmed R2 : {qual_trim_r2}",
         "Num reads qual trimmed R1 : {num_qual_trim_r1}",

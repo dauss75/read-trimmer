@@ -138,6 +138,7 @@ class Trimmer(object):
         self.primer3_R2                = kwargs["primer3_R2"]
         self.tagname_umi               = kwargs["tagname_umi"]
         self.tagname_primer            = kwargs["tagname_primer"]
+        self.trim_custom_seq_adapter   = kwargs["trim_custom_seq_adapter"]
         
         # user can provide, if not defaults used
         self.trim_polyA = True if "polyA_trim" in kwargs else False
@@ -178,7 +179,7 @@ class Trimmer(object):
         :returns end pos of adapter, -1 if not found
         '''
         alignment = edlib.align(self._custom_sequencing_adapter,
-                                r1_seq[0:len(self._custom_sequencing_adapter)+4],
+                                r1_seq[0:len(self._custom_sequencing_adapter)+3],
                                 mode="SHW",task="locations")
         if float(alignment["editDistance"])/len(self._custom_sequencing_adapter) <= 0.18:
             return alignment["locations"][-1][1]
