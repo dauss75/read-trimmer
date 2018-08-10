@@ -134,6 +134,8 @@ class Trimmer(object):
         self.max_mismatch_rate_overlap = kwargs["max_mismatch_rate_overlap"]
         self.synthetic_oligo_len       = kwargs["synthetic_oligo_len"]
         self.overlap_check_len         = kwargs["overlap_check_len"]
+        self.primer3_R1                = kwargs["primer3_R1"]
+        self.primer3_R2                = kwargs["primer3_R2"]
         self.tagname_umi               = kwargs["tagname_umi"]
         self.tagname_primer            = kwargs["tagname_primer"]
         

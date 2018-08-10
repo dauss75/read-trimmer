@@ -148,24 +148,31 @@ class QiaSeqTrimmer(Trimmer):
             primer_side_overlap_start,primer_side_overlap_end = self.primer_side_check(r1_primer_end_pos,r1_seq,r2_seq)
             if primer_side_overlap_start != -1:
                 primer_side_overlap = True
-                
+
+        num_primer_bases_R2 = len(primer) if self.primer3_R2 == -1 else self.primer3_R2 # keep all bases if primer3_R2 is -1
         if syn_side_overlap:
             r1_trim_end = syn_side_overlap_end + 1
             if self.check_primer_side and primer_side_overlap : # use primer side coordinates for trimming
-                r2_trim_end = primer_side_overlap_end + 1 + 8 # python will truncate to string end pos if we overflow the length
+                if self.primer3_R2 == -1: # no primer bases to trim
+                    r2_trim_end = primer_side_overlap_end + 1 + num_primer_bases_R2
+                else:
+                    r2_trim_end = primer_side_overlap_end + 1 + num_primer_bases_R2 # python will truncate to string end pos if we overflow the length
             else: # use syn side coordinates
-                r2_trim_end = self.synthetic_oligo_len + (syn_side_overlap_end - r1_primer_end_pos) + 1 + 8
+                r2_trim_end = self.synthetic_oligo_len + (syn_side_overlap_end - r1_primer_end_pos) + 1 + num_primer_bases_R2
         else:
             if primer_side_overlap:
                 # use primer side coordinates for trimming            
-                r2_trim_end = primer_side_overlap_end + 1 + 8 # python will truncate to string end pos if we overflow the length
+                r2_trim_end = primer_side_overlap_end + 1 + num_primer_bases_R2
                 r1_trim_end = r1_primer_end_pos + 1 + primer_side_overlap_end + 1 - self.synthetic_oligo_len
             else: # no overlap on syn or primer side
                 r1_trim_end = r1_len
                 r2_trim_end = r2_len
                 
         # update r1,r2 qual and sequence
-        r1_trim_start = r1_primer_end_pos - 8 + 1
+        if self.primer3_R1 == -1: # no primer bases to trim
+            r1_trim_start = r1_primer_end_pos + 1
+        else:
+            r1_trim_start = r1_primer_end_pos - self.primer3_R1 + 1
         r2_trim_start = self.synthetic_oligo_len
 
         if r1_trim_start >= r1_trim_end: # weird reads , mostly only primer on R1 , no endo seq
@@ -213,6 +220,8 @@ def trim_custom_sequencing_adapter(args,buffers):
                              synthetic_oligo_len = args.synthetic_oligo_len,
                              overlap_check_len = args.overlap_check_len,
                              check_primer_side = args.check_primer_side,
+                             primer3_R1 = args.primer3_bases_R1,
+                             primer3_R2 = args.primer3_bases_R2,
                              tagname_umi = args.tagname_umi,
                              tagname_primer = args.tagname_primer)
     
@@ -244,6 +253,8 @@ def wrapper_func(args,buffers):
                              synthetic_oligo_len = args.synthetic_oligo_len,
                              overlap_check_len = args.overlap_check_len,
                              check_primer_side = args.check_primer_side,
+                             primer3_R1 = args.primer3_bases_R1,
+                             primer3_R2 = args.primer3_bases_R2,
                              tagname_umi = args.tagname_umi,
                              tagname_primer = args.tagname_primer)
                                      
