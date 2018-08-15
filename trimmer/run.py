@@ -28,12 +28,16 @@ def init_parser():
                         help = "Whether this is a NextSeq sequencing run")
     parser.add_argument("--is_duplex", action = "store_true",
                          help = "Whether this is a duplex sequencing experiment")
-    parser.add_argument("--check-primer-side", action = "store_true",
+    parser.add_argument("--check_primer_side", action = "store_true",
                         help = "User primer side overlap coordinates for trimming R2 3' end")
     parser.add_argument("--tagname_primer", default = "pr",
                         help = "Tag name for Primer ID")
+    parser.add_argument("--tagname_primer_error", default = "pe",
+                        help = "Tag name for Primer Edit Dist")
     parser.add_argument("--tagname_umi", default = "mi",
                         help = "Tag name for UMI sequence")
+    parser.add_argument("--tagname_duplex", default = "DU",
+                        help = "Tag name for duplex tag")    
     parser.add_argument("--primer3_bases_R1", required = False, default = 8,
                         type = int, help = "Number of bases on 3' end of primer to keep on R1")
     parser.add_argument("--primer3_bases_R2", required = False, default = 8,

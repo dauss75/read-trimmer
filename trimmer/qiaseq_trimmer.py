@@ -28,6 +28,7 @@ class QiaSeqTrimmer(Trimmer):
         self.seqtype = kwargs["seqtype"]
         
         # some duplex specific params
+        self.tagname_duplex = kwargs["tagname_duplex"]
         self.is_duplex = kwargs["is_duplex"]
         if self.is_nextseq:
             self._duplex_adapters = [b"TTCTGAGCGAYYATAGGAGTCCT",b"GTTCTGAGCGAYYATAGGAGTCCT",
@@ -89,47 +90,54 @@ class QiaSeqTrimmer(Trimmer):
         best_editdist = None
         start_pos = 13 if r2_seq[0] == b"N" else 12
         for a in self._duplex_adapters:
-            align    = edlib.align(a,r1_seq[start_pos:len(a)+3],mode="SHW") # prefix mode
+            subseq_r2 = r2_seq[start_pos:start_pos+len(a)+3]            
+            align = edlib.align(a,subseq_r2,mode="SHW",
+                                   additionalEqualities=[("Y", "C"), ("Y", "T")]) # prefix mode
             editdist = align["editDistance"]
-            score    = float(editdist)/len(a) < best_editdist
+            score    = float(editdist)/len(a)
             if editdist == 0:
                 best_alignment = align
                 best_editdist  = editdist
                 best_score     = score
                 best_adapter   = a
+                best_subseq    = subseq_r2
                 break
             else:
                 if best_editdist == None or score < best_score:
-                    best_alignment = alignment
+                    best_alignment = align
                     best_editdist  = editdist
                     best_score     = score
                     best_adapter   = a
-                    
-        if best_score <= 0.18:            
+                    best_subseq    = subseq_r2
+        if best_score <= 0.18:
             end_pos = best_alignment["locations"][-1][1] # multiple alignments with same scores can be there , return end pos of last alignment(furthest end pos)
-            duplex_tag = b"CC" if r2_seq[end_pos - 13:end_pos - 9].find(b"CC") != -1 \
-                    else b"TT" if r2_seq[end_pos - 13:end_pos - 9].find(b"TT") != -1 \
+            duplex_tag = b"CC" if best_subseq[end_pos - 13:end_pos - 9].find(b"CC") != -1 \
+                    else b"TT" if best_subseq[end_pos - 13:end_pos - 9].find(b"TT") != -1 \
                     else b"NN"
             return (end_pos,duplex_tag)
         else:
             return (-1,"-1")
         
-    def _reformat_readid(self,read_id,umi,primer_id):
+    def _reformat_readid(self,read_id,umi,primer_id,primer_error):
         ''' update read id with umi and primer info
         :param read_id: bytes
         :param umi: bytes
         :param primer_id: bytes
+        :param primer_error: bytes
         '''
-        idx         = read_id.find(b" ") if read_id.find(b" ") != -1 else len(read_id)
-        primer_id   = primer_id.encode("ascii")
+        idx          = read_id.find(b" ") if read_id.find(b" ") != -1 else len(read_id)
+        primer_id    = primer_id.encode("ascii")
+        primer_error = primer_error.encode("ascii")
+        
         umi_info    = b":".join([self.tagname_umi,b"Z",umi])
         primer_info = b":".join([self.tagname_primer,b"Z",primer_id])
+        primer_error_info = b":".join([self.tagname_primer_error,b"Z",primer_error])
         
         if self._duplex_tag is None:
-            return b" ".join([read_id[0:idx],umi_info,primer_info])
+            return b"\t".join([read_id[0:idx],umi_info,primer_info,primer_error_info])
         else:
             duplex_info = b":".join([self.tagname_duplex,b"Z",self._duplex_tag])
-            return b" ".join([read_id[0:idx],umi_info,primer_info,duplex_info])
+            return b"\t".join([read_id[0:idx],umi_info,primer_info,primer_error_info,duplex_info])
         
     def qiaseq_trim(self,primer_datastruct):
         """ Trim QiaSeq DNA/RNA reads
@@ -152,6 +160,7 @@ class QiaSeqTrimmer(Trimmer):
         primer_side_overlap = False
         syn_side_overlap    = False
         primer_id = "-1"
+        primer_error = "-1"
         
         # unpack R1,R2 info
         r1_id,r1_seq,r1_qual = self._r1_info
@@ -166,10 +175,11 @@ class QiaSeqTrimmer(Trimmer):
 
         # identify duplex adapter and tag if needed
         if self.is_duplex:
-            adapter_end_pos,self._duplex_tag = _id_duplex_tag(r2_seq)
+            adapter_end_pos,self._duplex_tag = self._id_duplex_tag(r2_seq)
             if adapter_end_pos == -1: # drop read                
                 return
             # update synthetic oligo len
+            self._is_duplex_adapter_present = True
             self.synthetic_oligo_len = 12 + (adapter_end_pos + 1) #(this can be updated again below if umi starts with a N, assuming fixed 12 b.p UMI)
             
         # get umi
@@ -211,20 +221,24 @@ class QiaSeqTrimmer(Trimmer):
         r1_primer_end_pos,primer,editdist,score = self.primer_trim(primer_datastruct,r1_seq)
 
         if r1_primer_end_pos == -1:
-            r1_id = self._reformat_readid(r1_id,umi,primer_id)
-            r2_id = self._reformat_readid(r2_id,umi,primer_id)
+            r1_id = self._reformat_readid(r1_id,umi,primer_id,primer_error)
+            r2_id = self._reformat_readid(r2_id,umi,primer_id,primer_error)
+            # just trim synthetic part on R2
+            r2_seq = r2_seq[synthetic_oligo_len:]
+            r2_qual = r2_qual[synthetic_oligo_len:]            
             self._r1_info = (r1_id,r1_seq,r1_qual)
             self._r2_info = (r2_id,r2_seq,r2_qual)
-            self.synthetic_oligo_len = synthetic_oligo_len
+            self.synthetic_oligo_len = synthetic_oligo_len            
             return
-
+        
         # set annotation for primer tag
         temp = primer_datastruct[0][primer][0]
         if self.seqtype == "dna":
             chrom,pos,strand,seq = temp[1]
             primer_info = chrom+"-"+strand+"-"+pos
         elif self.seqtype == "rna":
-            primer_info = temp[0] # use primer id 
+            primer_info = temp[0] # use primer id
+        primer_error = str(editdist)
 
         # look for overlap on synthetic side , i.e. align endo seq from R2 on R1
         syn_side_overlap_start,syn_side_overlap_end = self.synthetic_side_check(r1_seq,r2_seq)
@@ -275,8 +289,8 @@ class QiaSeqTrimmer(Trimmer):
         r2_qual = r2_qual[r2_trim_start:r2_trim_end]
             
         # update read ids
-        r1_id = self._reformat_readid(r1_id,umi,primer_id)
-        r2_id = self._reformat_readid(r2_id,umi,primer_id)
+        r1_id = self._reformat_readid(r1_id,umi,primer_info,primer_error)
+        r2_id = self._reformat_readid(r2_id,umi,primer_info,primer_error)
         
         # update read info tuple
         self._r1_info = (r1_id,r1_seq,r1_qual)
@@ -313,8 +327,10 @@ def trim_custom_sequencing_adapter(args,buffers):
                              trim_custom_seq_adapter = False,
                              primer3_R1 = args.primer3_bases_R1,
                              primer3_R2 = args.primer3_bases_R2,
+                             tagname_duplex = args.tagname_duplex,
                              tagname_umi = args.tagname_umi,
-                             tagname_primer = args.tagname_primer)
+                             tagname_primer = args.tagname_primer,
+                             tagname_primer_error = args.tagname_primer_error)
     
     buff_r1,buff_r2 = buffers
     r1_lines = buff_r1.split(b"\n")
@@ -357,8 +373,10 @@ def wrapper_func(args,buffer_):
                              trim_custom_seq_adapter = args.to_trim_custom_adapter,
                              primer3_R1 = args.primer3_bases_R1,
                              primer3_R2 = args.primer3_bases_R2,
+                             tagname_duplex = args.tagname_duplex,
                              tagname_umi = args.tagname_umi,
-                             tagname_primer = args.tagname_primer)
+                             tagname_primer = args.tagname_primer,
+                             tagname_primer_error = args.tagname_primer_error)
                                      
     buff_r1,buff_r2 = buffer_
     r1_lines        = buff_r1.split(b"\n")
@@ -555,7 +573,9 @@ def main(args):
     out_metrics = args.out_metrics
     # convert to bytestring
     args.tagname_primer = args.tagname_primer.encode("ascii")
+    args.tagname_primer_error = args.tagname_primer_error.encode("ascii")    
     args.tagname_umi = args.tagname_umi.encode("ascii")
+    args.tagname_duplex = args.tagname_duplex.encode("ascii")
     
 
     global primer_datastruct
@@ -664,21 +684,20 @@ def main(args):
         "Num reads qual trimmed R2 : {num_qual_trim_r2}",        
     ]
     if args.is_duplex:
-        out_metrics.append(
-            "Num CC reads : {num_NN}".format(num_CC = num_CC),
+        out_metrics.extend(
+            ["Num CC reads : {num_CC}".format(num_CC = num_CC),
             "Num TT reads : {num_TT}".format(num_TT = num_TT),
             "Num NN reads : {num_NN}".format(num_NN = num_NN),
-            "Num read fragments dropped (no duplex adapter) : {num_no_duplex}".format(num_no_duplex = num_no_duplex)
-        )            
-
+            "Num read fragments dropped (no duplex adapter) : {num_no_duplex}".format(num_no_duplex = num_no_duplex)]
+        )
     out_metrics_lines = "\n".join(out_metrics).format(tot_reads = total_reads, num_r1_pr_trimmed = num_r1_primer_trimmed,
                                                       num_r2_pr_trimmed = num_r2_primer_trimmed,
                                                       num_syn_trimmed = num_r1_syn_trimmed,
                                                       num_overlap = num_r1_r2_overlap,
                                                       too_short = num_too_short,
                                                       odd = num_odd,
-                                                      qual_trim_r1 = float(num_qual_trim_r1_bases)/(num_qual_trim_r1),
-                                                      qual_trim_r2 = float(num_qual_trim_r2_bases)/(num_qual_trim_r2),
+                                                      qual_trim_r1 = 0 if num_qual_trim_r1_bases == 0 else float(num_qual_trim_r1_bases)/(num_qual_trim_r1),
+                                                      qual_trim_r2 = 0 if num_qual_trim_r2_bases == 0 else float(num_qual_trim_r2_bases)/(num_qual_trim_r2),
                                                       num_qual_trim_r1 = num_qual_trim_r1,
                                                       num_qual_trim_r2 = num_qual_trim_r2)
                                                       

@@ -138,6 +138,7 @@ class Trimmer(object):
         self.primer3_R2                = kwargs["primer3_R2"]
         self.tagname_umi               = kwargs["tagname_umi"]
         self.tagname_primer            = kwargs["tagname_primer"]
+        self.tagname_primer_error      = kwargs["tagname_primer_error"]        
         self.trim_custom_seq_adapter   = kwargs["trim_custom_seq_adapter"]
         
         # user can provide, if not defaults used
