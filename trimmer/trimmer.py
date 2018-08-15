@@ -86,10 +86,10 @@ class PrimerDataStruct(object):
                 contents = line.strip("\n\r").split("\t")
                 primer   = contents[-1]
                 if primer in self._primer_info:
-                    temp = [str(primer_id),[]]
+                    temp = [str(primer_id),contents,[]]
                     self._primer_info[primer].append(temp) # store exact matching primers in the same value bucket
                 else:
-                    temp = [str(primer_id),[]] # empty list for clustered primers from cd-hit
+                    temp = [str(primer_id),contents,[]] # empty list for clustered primers from cd-hit
                     self._primer_info[primer] = [temp]
 
                     # create k-mer index
@@ -129,7 +129,7 @@ class Trimmer(object):
         ''' Class constructor
         '''        
         # user must provide
-        self.is_nextseq                = kwargs["is_nextseq"]            
+        self.is_nextseq                = kwargs["is_nextseq"]
         self.max_mismatch_rate_primer  = kwargs["max_mismatch_rate_primer"]
         self.max_mismatch_rate_overlap = kwargs["max_mismatch_rate_overlap"]
         self.synthetic_oligo_len       = kwargs["synthetic_oligo_len"]

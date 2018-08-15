@@ -21,8 +21,13 @@ def init_parser():
                         help = "Output file path for trimming metrics")
     parser.add_argument("--primer_file", required = True,
                         help = "Primer file with 3' coordinates" )
+    parser.add_argument("--seqtype", default="dna",const="dna",
+                        nargs="?",choices=["dna","rna"],
+                        help="Sequencing type : dna/rna. Default : %(default)s")
     parser.add_argument("--is-nextseq", action = "store_true",
                         help = "Whether this is a NextSeq sequencing run")
+    parser.add_argument("--is_duplex", action = "store_true",
+                         help = "Whether this is a duplex sequencing experiment")
     parser.add_argument("--check-primer-side", action = "store_true",
                         help = "User primer side overlap coordinates for trimming R2 3' end")
     parser.add_argument("--tagname_primer", default = "pr",
