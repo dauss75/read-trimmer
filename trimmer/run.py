@@ -24,7 +24,7 @@ def init_parser():
     parser.add_argument("--seqtype", default="dna",const="dna",
                         nargs="?",choices=["dna","rna"],
                         help="Sequencing type : dna/rna. Default : %(default)s")
-    parser.add_argument("--is-nextseq", action = "store_true",
+    parser.add_argument("--is_nextseq", action = "store_true",
                         help = "Whether this is a NextSeq sequencing run")
     parser.add_argument("--is_duplex", action = "store_true",
                          help = "Whether this is a duplex sequencing experiment")

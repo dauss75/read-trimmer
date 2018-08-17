@@ -581,7 +581,8 @@ def main(args):
     global primer_datastruct
     f_out_metrics = open(args.out_metrics,"w")
     
-    primer_datastruct = PrimerDataStruct(k=8,primer_file=args.primer_file,cdhit_est=args.cdhit_est).primer_search_datastruct
+    primer_datastruct = PrimerDataStruct(k=8,primer_file=args.primer_file,cdhit_est=args.cdhit_est,
+                                         ncpu=args.ncpu,seqtype=args.seqtype).primer_search_datastruct
     l = multiprocessing.Lock()
 
     logger.info("\n{}\n".format("--"*10))

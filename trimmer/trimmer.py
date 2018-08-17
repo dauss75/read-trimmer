@@ -4,8 +4,23 @@ import subprocess
 import itertools
 import edlib
 import os
+import multiprocessing
 
 from _utils import quality_trim
+
+def pairwise_align(idx):
+    i,j = idx
+    if i == j:
+        return(-1,-1)
+    shorter_primer,longer_primer = (primers[i],primers[j]) \
+                                   if len(primers[i]) < len(primers[j]) \
+                                      else (primers[j],primers[i])
+    editdist_cutoff = int(0.1*len(shorter_primer))
+    temp = edlib.align(shorter_primer,longer_primer,mode="HW",k=editdist_cutoff) # align in infix mode,
+    if temp["editDistance"] != -1:
+        return (shorter_primer,longer_primer)
+    else:
+        return (-1,-1)
 
 class PrimerDataStruct(object):
     '''
@@ -16,66 +31,43 @@ class PrimerDataStruct(object):
         self.primer_file = kwargs["primer_file"]
         self.cdhit_est   = kwargs["cdhit_est"]
         self.k = kwargs["k"]
+        self.ncpu = kwargs["ncpu"]
+        self.seqtype = kwargs["seqtype"]
 
-        self._cdhit_fasta      =   self.primer_file + ".fasta"
-        self._cdhit_out_prefix =   self.primer_file + ".clusters.temp"
-        self._cdhit_out        =   self.primer_file + ".clusters.temp.clstr"
-        self._cdhit_out_parsed =   self.primer_file + ".clusters"
-
-    def _parse_cdhit(self):
-        ''' Parse cd-hit output to usable format
+        self._primer_col = 4 if self.seqtype == "rna" else 3 # rna or dna primer file parsing
+        
+    def _cluster_primer_seqs(self):
+        ''' Pairwise comparison of primers , store information
+        for other closley matching primers for each primer
         '''
+        global primers
         primers = []
-        i=0
-
+        self._primer_clusters = collections.defaultdict(set)
         with open(self.primer_file,"r") as IN:
             for line in IN:
-                primers.append(line.strip("\n\r").split("\t")[-1])
+                primer = line.strip("\n\r").split("\t")[self._primer_col]
+                if primer not in primers:
+                    primers.append(primer)
+                    
+        pairwise_indices = []
+        for i in range(0,len(primers)):
+            for j in range(0,len(primers)):
+                if i == j:
+                    continue
+                pairwise_indices.append((i,j))
 
-        cluster_info = collections.defaultdict(list)
-        with open(self._cdhit_out,"r") as IN:
-            for line in IN:
-                if line.startswith(">"):
-                    cluster_num = int(line.strip("\n").split(" ")[1])
-                    new_cluster = True
-                else:
-                    temp = line.strip("\n").split("\t")[1].split(",")[1].strip().split("...")[0].strip(">")
-                    primer = primers[int(temp)]
-                    cluster_info[str(cluster_num)].append(primer)
-
-        with open(self._cdhit_out_parsed,"w") as OUT:
-            for cluster in cluster_info:
-                if len(cluster_info[cluster]) > 1:
-                    OUT.write(",".join(cluster_info[cluster])+"\n")
-        
-
-    def _cluster_primer_seqs(self):
-        ''' Cluster similar primer sequences for use later in primer trimming
-        '''
-        # create a fasta of the primers
-        cmd1 = (
-            """ i=0; while read chrom pos strand primer; do echo ">"$i; echo $primer|tr -d '\r'; """
-            """ i=$(($i+1)); done < {primerfile} > {fasta}; """.format(
-                primerfile = self.primer_file,fasta=self._cdhit_fasta)
-        )
-        subprocess.check_call(cmd1,shell=True)
-        # run cd-hit
-        cmd2 = "{cdhit_est} -i {fasta} -o {out_prefix}".format(
-            cdhit_est = self.cdhit_est,
-            fasta = self._cdhit_fasta,
-            out_prefix = self._cdhit_out_prefix)
-        subprocess.check_call(cmd2,shell=True)
-        # parse output to usable format
-        self._parse_cdhit()
-
-    def _cleanup(self):
-        ''' Clean-up temp files
-        '''
-        for f in [self._cdhit_fasta,self._cdhit_out_prefix,self._cdhit_out]:
-            os.remove(f)
+        p = multiprocessing.Pool(self.ncpu)
+        for res in p.map(pairwise_align,pairwise_indices):
+            if res[0] == -1:
+                continue
+            shorter_primer,longer_primer = res
+            self._primer_clusters[shorter_primer].add(longer_primer)
+            self._primer_clusters[longer_primer].add(shorter_primer)
+        p.close()
+        p.join()                    
             
     def _create_primer_search_datastruct(self):
-        '''
+        ''' Create k-mer index on the primers
         '''
         self._primer_kmers = collections.defaultdict(set)
         self._primer_info = collections.defaultdict(list) 
@@ -100,18 +92,10 @@ class PrimerDataStruct(object):
 
                 primer_id+=1
 
-        # add close primer sequences for each primer based on cd-hit results
-        with open(self._cdhit_out_parsed,"r") as IN:
-            for line in IN:
-                temp = line.strip("\n").split(",")
-                
-                for p1,p2 in itertools.product(temp,repeat=2):                    
-                    assert p1 in self._primer_info and p2 in self._primer_info,"Primer(s) from cd-hit not in PrimerFile !!"
-                    if p1 == p2: # same primer sequences
-                        continue
-
-                    self._primer_info[p1][0][1].append(p2)
-                    self._primer_info[p2][0][1].append(p1)                
+        # add close primer sequences for each primer based on pairwise clustering
+        for p1 in self._primer_clusters:
+            for p2 in self._primer_clusters[p]:
+                self._primer_info[p1][0][1].append(p2)
 
     @property
     def primer_search_datastruct(self):
@@ -119,7 +103,6 @@ class PrimerDataStruct(object):
         '''
         self._cluster_primer_seqs()
         self._create_primer_search_datastruct()
-        self._cleanup()
         return (self._primer_info,self._primer_kmers)
 
 class Trimmer(object):
