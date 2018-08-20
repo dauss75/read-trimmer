@@ -55,7 +55,10 @@ class QiaSeqTrimmer(Trimmer):
         return self._is_too_short
     @property
     def is_odd_structure(self):
-        return self._is_odd_structure    
+        return self._is_odd_structure
+    @property
+    def is_bad_umi(self):
+        return self._is_bad_umi
     
     # R1 info
     @property
@@ -138,6 +141,22 @@ class QiaSeqTrimmer(Trimmer):
         else:
             duplex_info = b":".join([self.tagname_duplex,b"Z",self._duplex_tag])
             return b"\t".join([read_id[0:idx],umi_info,primer_info,primer_error_info,duplex_info])
+
+    def _umi_filter_rna(self,umi,umi_qual):
+        ''' filter umi based on sequence and base qualities        
+        '''        
+        num_Ns = umi.count(b"N")
+        if num_Ns > self.umi_filter_Ns:
+            return True
+        counter = 0
+        base = 33
+        for q in umi_qual.encode("ascii"):
+            qual = ord(q) - base
+            if qual < self.umi_filter_min_bq:
+                counter+=1
+                
+        if counter < self.umi_filter_min_lowQ_bases:
+            return False
         
     def qiaseq_trim(self,primer_datastruct):
         """ Trim QiaSeq DNA/RNA reads
@@ -149,6 +168,7 @@ class QiaSeqTrimmer(Trimmer):
         self._is_r1_r2_overlap          = False
         self._is_too_short              = False
         self._is_odd_structure          = False
+        self._is_bad_umi                = False # only used for RNA
 
         self.is_qual_trim_r1            = False
         self.is_qual_trim_r2            = False
@@ -177,7 +197,7 @@ class QiaSeqTrimmer(Trimmer):
         if self.is_duplex:
             adapter_end_pos,self._duplex_tag = self._id_duplex_tag(r2_seq)
             if adapter_end_pos == -1: # drop read                
-                return
+                return            
             # update synthetic oligo len
             self._is_duplex_adapter_present = True
             self.synthetic_oligo_len = 12 + (adapter_end_pos + 1) #(this can be updated again below if umi starts with a N, assuming fixed 12 b.p UMI)
@@ -186,9 +206,19 @@ class QiaSeqTrimmer(Trimmer):
         synthetic_oligo_len = self.synthetic_oligo_len   
         if not r2_seq.startswith(b"N"):
             umi = r2_seq[0:12]
+            umi_qual = r2_qual[0:12]
         else:
-            umi = r2_seq[1:13]            
+            umi = r2_seq[1:13]
+            umi_qual = r2_qual[1:13]
             self.synthetic_oligo_len += 1
+            
+        if self.seqtype == "rna":
+            self._is_bad_umi = self._umi_filter_rna(umi,umi_qual)
+            
+        if self._is_bad_umi: # drop read
+            self.synthetic_oligo_len = synthetic_oligo_len
+            return
+        
         
         # quality trimming        
         r1_qual_end = self.quality_trim_(r1_qual,r1_seq,14)
@@ -224,8 +254,8 @@ class QiaSeqTrimmer(Trimmer):
             r1_id = self._reformat_readid(r1_id,umi,primer_id,primer_error)
             r2_id = self._reformat_readid(r2_id,umi,primer_id,primer_error)
             # just trim synthetic part on R2
-            r2_seq = r2_seq[synthetic_oligo_len:]
-            r2_qual = r2_qual[synthetic_oligo_len:]            
+            r2_seq = r2_seq[self.synthetic_oligo_len:]
+            r2_qual = r2_qual[self.synthetic_oligo_len:]            
             self._r1_info = (r1_id,r1_seq,r1_qual)
             self._r2_info = (r2_id,r2_seq,r2_qual)
             self.synthetic_oligo_len = synthetic_oligo_len            
@@ -360,7 +390,7 @@ def wrapper_func(args,buffer_):
     :param bytestring buffers_: A bytestring of length buffersize returned by the iterate_fastq function
 
     :rtype tuple
-    :returns trimmed R1,R2 lines and metrics as tuples
+    :returns trimmed R1,R2 lines and metrics as a tuple
     '''
     trim_obj = QiaSeqTrimmer(is_nextseq = args.is_nextseq,
                              is_duplex = args.is_duplex,
@@ -377,32 +407,36 @@ def wrapper_func(args,buffer_):
                              tagname_umi = args.tagname_umi,
                              tagname_primer = args.tagname_primer,
                              tagname_primer_error = args.tagname_primer_error)
-                                     
+    
+    # unpack input byte string                                 
     buff_r1,buff_r2 = buffer_
     r1_lines        = buff_r1.split(b"\n")
     r2_lines        = buff_r2.split(b"\n")
     
-    # init counters
+    # init some counters
+    # general bookkeeping
     num_too_short         = 0
     num_odd               = 0
+    num_bad_umi           = 0
     num_no_duplex         = 0
     num_reads             = 0
     num_r1_primer_trimmed = 0
     num_r1_syn_trimmed    = 0
     num_r2_primer_trimmed = 0
-    num_r1_r2_overlap     = 0
-
+    num_r1_r2_overlap     = 0    
+    # duplex specific
     num_CC = 0
     num_TT = 0
     num_NN = 0
-    
+    # quality trimming
     num_qual_trim_bases_r1 = 0
     num_qual_trim_bases_r2 = 0
     num_qual_trim_r1       = 0
     num_qual_trim_r2       = 0
-    
-    out       = []
-    out_lines = []
+
+    # store r1 and r2 lines
+    out_lines_r1_bucket = []
+    out_lines_r2_bucket = []
     
     i = 1
     for line in zip(r1_lines,r2_lines):
@@ -431,6 +465,10 @@ def wrapper_func(args,buffer_):
             elif trim_obj.is_odd_structure:
                 num_odd+=1
                 i+=1
+                continue
+            elif trim_obj.is_bad_umi:
+                assert seqtype == "rna","UMI filter only applicable for speRNA reads!"
+                num_bad_umi+=1
                 continue
             elif not trim_obj.is_duplex_adapter_present:
                 num_no_duplex+=1
@@ -470,15 +508,16 @@ def wrapper_func(args,buffer_):
                 else:
                     raise Exception("Invalid duplex tag : {}".format(duplex_tag.decode("ascii")))
                     
-            out_lines.append((trimmed_r1_lines,trimmed_r2_lines))
+            out_lines_R1_bucket.append(trimmed_r1_lines)
+            out_lines_R2_bucket.append(trimmed_r2_lines)
             
         i+=1
         
-    metrics = (num_r1_primer_trimmed,num_r1_syn_trimmed,num_r2_primer_trimmed,num_r1_r2_overlap,num_too_short,num_odd,num_reads,num_qual_trim_bases_r1,num_qual_trim_bases_r2,num_qual_trim_r1,num_qual_trim_r2,num_CC,num_TT,num_NN,num_no_duplex)
+    metrics = (num_r1_primer_trimmed,num_r1_syn_trimmed,num_r2_primer_trimmed,num_r1_r2_overlap,num_too_short,num_odd,num_bad_umi,num_reads,num_qual_trim_bases_r1,num_qual_trim_bases_r2,num_qual_trim_r1,num_qual_trim_r2,num_CC,num_TT,num_NN,num_no_duplex)
+    out_lines_R1 = b"\n".join(out_lines_R1_bucket)
+    out_lines_R2 = b"\n".join(out_lines_R2_bucket)
 
-    out = [out_lines, metrics]
-            
-    return out
+    return (out_lines_R1,out_lines_R2,metrics)
 
             
 def iterate_fastq(f,f2,ncpu,buffer_size=4*4*1024**2):
@@ -609,6 +648,7 @@ def main(args):
     num_r1_r2_overlap     = 0
     num_too_short         = 0
     num_odd               = 0
+    num_bad_umi           = 0
     num_no_duplex         = 0
     total_reads           = 0
     
@@ -633,7 +673,7 @@ def main(args):
     for chunks in iterate_fastq(f,f2,args.ncpu):
         res = p.map(func,chunks)
 
-        for r1_r2_lines,counter_tup in res:
+        for trimmed_r1_lines,trimmed_r2_lines,counter_tup in res:
 
             # unpack counters
             num_r1_primer_trimmed   +=  counter_tup[0]
@@ -642,28 +682,25 @@ def main(args):
             num_r1_r2_overlap       +=  counter_tup[3]
             num_too_short           +=  counter_tup[4]
             num_odd                 +=  counter_tup[5]
-            total_reads             +=  counter_tup[6]
+            num_bad_umi             +=  counter_tup[6]
+            total_reads             +=  counter_tup[7]
             
-            num_qual_trim_r1_bases  +=  counter_tup[7]
-            num_qual_trim_r2_bases  +=  counter_tup[8]        
-            num_qual_trim_r1        +=  counter_tup[9]
-            num_qual_trim_r2        +=  counter_tup[10]
+            num_qual_trim_r1_bases  +=  counter_tup[8]
+            num_qual_trim_r2_bases  +=  counter_tup[9]        
+            num_qual_trim_r1        +=  counter_tup[10]
+            num_qual_trim_r2        +=  counter_tup[11]
             
-            num_CC                  +=  counter_tup[11]
-            num_TT                  +=  counter_tup[12]
-            num_NN                  +=  counter_tup[13]
-            num_no_duplex           +=  counter_tup[14]
+            num_CC                  +=  counter_tup[12]
+            num_TT                  +=  counter_tup[13]
+            num_NN                  +=  counter_tup[14]
+            num_no_duplex           +=  counter_tup[15]
 
 
-            for i in range(len(r1_r2_lines)):
-                trimmed_r1_lines  =  r1_r2_lines[i][0]
-                trimmed_r2_lines  =  r1_r2_lines[i][1]
-
-                f_out_r1.write(trimmed_r1_lines)
-                f_out_r1.write(b"\n")
-                f2_out_r2.write(trimmed_r2_lines)
-                f2_out_r2.write(b"\n")
-
+            f_out_r1.write(trimmed_r1_lines)
+            f_out_r1.write(b"\n")
+            f2_out_r2.write(trimmed_r2_lines)
+            f2_out_r2.write(b"\n")
+            
             nchunk += 1
             logger.info("Processed : {n} reads".format(n=total_reads))
             
@@ -679,6 +716,7 @@ def main(args):
         "Num read fragments overlapping : {num_overlap}",
         "Num read fragments dropped too short (R1 or R2 < 50 bp after qual trimming) : {too_short}",
         "Num read fragments dropped odd structure (usually R1 has only primer sequence) : {odd}",
+        "Num read fragments dropped bad UMI : {bad_umi}"
         "Avg num bases qual trimmed R1 : {qual_trim_r1}",
         "Avg num bases qual trimmed R2 : {qual_trim_r2}",
         "Num reads qual trimmed R1 : {num_qual_trim_r1}",
@@ -696,6 +734,7 @@ def main(args):
                                                       num_syn_trimmed = num_r1_syn_trimmed,
                                                       num_overlap = num_r1_r2_overlap,
                                                       too_short = num_too_short,
+                                                      bad_umi = num_bad_umi,
                                                       odd = num_odd,
                                                       qual_trim_r1 = 0 if num_qual_trim_r1_bases == 0 else float(num_qual_trim_r1_bases)/(num_qual_trim_r1),
                                                       qual_trim_r2 = 0 if num_qual_trim_r2_bases == 0 else float(num_qual_trim_r2_bases)/(num_qual_trim_r2),
