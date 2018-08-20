@@ -2,25 +2,12 @@ import string
 import collections
 import subprocess
 import itertools
+import re
 import edlib
 import os
 import multiprocessing
 
 from _utils import quality_trim
-
-def pairwise_align(idx):
-    i,j = idx
-    if i == j:
-        return(-1,-1)
-    shorter_primer,longer_primer = (primers[i],primers[j]) \
-                                   if len(primers[i]) < len(primers[j]) \
-                                      else (primers[j],primers[i])
-    editdist_cutoff = int(0.1*len(shorter_primer))
-    temp = edlib.align(shorter_primer,longer_primer,mode="HW",k=editdist_cutoff) # align in infix mode,
-    if temp["editDistance"] != -1:
-        return (shorter_primer,longer_primer)
-    else:
-        return (-1,-1)
 
 class PrimerDataStruct(object):
     '''
@@ -29,12 +16,31 @@ class PrimerDataStruct(object):
         '''
         '''
         self.primer_file = kwargs["primer_file"]
-        self.cdhit_est   = kwargs["cdhit_est"]
         self.k = kwargs["k"]
         self.ncpu = kwargs["ncpu"]
         self.seqtype = kwargs["seqtype"]
 
         self._primer_col = 4 if self.seqtype == "rna" else 3 # rna or dna primer file parsing
+
+    def _pairwise_align(self,idx):
+        ''' Pairwise align two primers
+        :param tuple idx: (i,j) , the indices of the two primers to align
+        :rtype tuple
+        :returns The shorter and longer primer, (-1,-1) if no alignment
+        '''
+        i,j = idx
+        if i == j:
+            return(-1,-1)
+        shorter_primer,longer_primer = (primers[i],primers[j]) \
+                                       if len(primers[i]) < len(primers[j]) \
+                                          else (primers[j],primers[i])
+        editdist_cutoff = int(0.1*len(shorter_primer))
+        temp = edlib.align(shorter_primer,longer_primer,mode="HW",k=editdist_cutoff) # align in infix mode,
+        if temp["editDistance"] != -1:
+            return (shorter_primer,longer_primer)
+        else:
+            return (-1,-1)
+        
         
     def _cluster_primer_seqs(self):
         ''' Pairwise comparison of primers , store information
@@ -48,16 +54,12 @@ class PrimerDataStruct(object):
                 primer = line.strip("\n\r").split("\t")[self._primer_col]
                 if primer not in primers:
                     primers.append(primer)
-                    
-        pairwise_indices = []
-        for i in range(0,len(primers)):
-            for j in range(0,len(primers)):
-                if i == j:
-                    continue
-                pairwise_indices.append((i,j))
+
+        pairwise_indices = ((i,j) for j in range(0,len(primers)) \
+                            for i in range(0,len(primers)))
 
         p = multiprocessing.Pool(self.ncpu)
-        for res in p.map(pairwise_align,pairwise_indices):
+        for res in p.imap(self._pairwise_align,pairwise_indices,chunksize=int(len(primers)/self.ncpu)):
             if res[0] == -1:
                 continue
             shorter_primer,longer_primer = res
@@ -137,6 +139,7 @@ class Trimmer(object):
         self._revcomp_table             = bytes.maketrans(b"ACTG", b"TGAC")
         self._padding                   = 5
         self._custom_sequencing_adapter = b"AATGTACAGTATTGCGTTTTG"
+        self._polyA_motif = re.compile(b"^([ACGTN]*?[CGTN])([A]{8,}[ACGNT]*$)")
         
     # kmer size
     @property
@@ -281,3 +284,17 @@ class Trimmer(object):
         ''' Reverse complement a sequence
         '''
         return seq.translate(self._revcomp_table)[::-1]
+
+    def polyA_trim(self,seq):
+        ''' Return start pos of polyA tail , if present
+        returns -1 if not found
+
+        :param bytes seq: The read sequence to trim
+        :rtype int
+        :returns the polyA start position
+        '''
+        match = self._polyA_motif.match(seq)
+        if match: # found polyA
+            return match.start(2)
+        else:
+            return -1
