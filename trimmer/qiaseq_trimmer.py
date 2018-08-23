@@ -216,11 +216,12 @@ class QiaSeqTrimmer(Trimmer):
         r2_id,r2_seq,r2_qual = self._r2_info
 
         # trim custom sequencing adapter if needed
-        r1_trim_start = self.custom_sequencing_adapter_check(r1_seq)
-        # update r1
-        if r1_trim_start != -1:
-            r1_seq = r1_seq[r1_trim_start+1:]
-            r1_qual = r1_qual[r1_trim_start+1:]
+        if self.trim_custom_seq_adapter:
+            r1_trim_start = self.custom_sequencing_adapter_check(r1_seq)
+            # update r1
+            if r1_trim_start != -1:
+                r1_seq = r1_seq[r1_trim_start+1:]
+                r1_qual = r1_qual[r1_trim_start+1:]
 
         # identify duplex adapter and tag if needed
         if self.is_duplex:
@@ -829,51 +830,48 @@ def main(args):
 
 
     out_metrics_detail = [
-        "Num Primer side reads with primer identified : {num_r1_pr_trimmed}",
-        "Num Primer side reads with 3' synthetic oligo trimmed : {num_syn_trimmed}",
-        "Num UMI side reads with 3' synthetic oligo trimmed (including primer) : {num_r2_pr_trimmed}",        
-        "Num read fragments overlapping : {num_overlap}",
-        "Avg num Primer side bases qual trimmed : {qual_trim_r1}",
-        "Avg num UMI side bases qual trimmed : {qual_trim_r2}",
-        "Num Primer side reads qual trimmed : {num_qual_trim_r1}",
-        "Num UMI side reads qual trimmed : {num_qual_trim_r2}",
+        "{num_r1_pr_trimmed}\tNum Primer side reads with primer identified",
+        "{num_syn_trimmed}\tNum Primer side reads with 3' synthetic oligo trimmed",
+        "{num_r2_pr_trimmed}\tNum UMI side reads with 3' synthetic oligo trimmed (including primer)",
+        "{num_overlap}\tNum read fragments overlapping",
+        "{qual_trim_r1}\tAvg num Primer side bases qual trimmed",
+        "{qual_trim_r2}\tAvg num UMI side bases qual trimmed",
+        "{num_qual_trim_r1}\tNum Primer side reads qual trimmed",
+        "{num_qual_trim_r2}\tNum UMI side reads qual trimmed",
     ]
     out_metrics = [
-        "Total read fragments : {tot_reads}".format(tot_reads = total_reads),
-        "Num read fragments after trimming : {num_after_trim}".format(num_after_trim = num_after_trim)
+        "{tot_reads}\tTotal read fragments".format(tot_reads = total_reads),
+        "{num_after_trim}\tNum read fragments after trimming".format(num_after_trim = num_after_trim)
     ]
     out_metrics_dropped = [
-        "Num read fragments dropped too short : {too_short}".format(too_short = num_too_short),
-        "Num read fragments dropped odd structure (usually Primer side has only primer sequence) : {odd}".format(odd = num_odd)
+        "{too_short}\tNum read fragments dropped too short".format(too_short = num_too_short),
+        "{odd}\tNum read fragments dropped odd structure (usually Primer side has only primer sequence)".format(odd = num_odd)
     ]
     total_dropped = num_too_short + num_odd
     
     if args.is_duplex:
         out_metrics.extend(
-            ["Num CC reads : {num_CC}".format(num_CC = num_CC),
-            "Num TT reads : {num_TT}".format(num_TT = num_TT),
-            "Num NN reads : {num_NN}".format(num_NN = num_NN)]
-        )
+            ["{num_CC}\tNum CC reads".format(num_CC = num_CC),
+             "{num_TT}\tNum TT reads".format(num_TT = num_TT),
+             "{num_NN}\tNum NN reads".format(num_NN = num_NN)])
         out_metrics_dropped.extend([
-            "Num read fragments dropped (no duplex adapter) : {num_no_duplex}".format(
+            "{num_no_duplex}\tNum read fragments dropped (no duplex adapter)".format(
                 num_no_duplex = num_no_duplex)])
         total_dropped += num_no_duplex
         
     if args.seqtype == "rna":
         out_metrics_detail.extend(
-            ["Avg num bases {p1} trimmed Primer side :  {p1_trim}".format(p1 = args.poly_tail_primer_side,
-                                                                          p1_trim = 0 if num_poly_trim_bases_primer == 0 else \
-                                                                          float(num_poly_trim_bases_primer)/num_poly_trim_primer),
-             "Avg num bases {p2} trimmed UMI side : {p2_trim}".format(p2 = args.poly_tail_umi_side,
-                                                                      p2_trim = 0 if num_poly_trim_bases_umi == 0 else \
-                                                                       float(num_poly_trim_bases_umi)/num_poly_trim_umi),
-             "Num reads {p1} trimmed Primer side : {p1_trim}".format(p1 = args.poly_tail_primer_side,
-                                                                     p1_trim = num_poly_trim_primer),
-             "Num reads {p2} trimmed UMI side : {p2_trim}".format(p2 = args.poly_tail_umi_side,
-                                                                  p2_trim = num_poly_trim_umi)]
-        )
+            ["{p1_trim}\tAvg num bases {p1} trimmed Primer side".format(p1 = args.poly_tail_primer_side,
+                                                                        p1_trim = 0 if num_poly_trim_bases_primer == 0 else \
+                                                                        round(float(num_poly_trim_bases_primer)/num_poly_trim_primer,2)),
+             "{p2_trim}\tAvg num bases {p2} trimmed UMI side".format(p2 = args.poly_tail_umi_side,
+                                                                     p2_trim = 0 if num_poly_trim_bases_umi == 0 else \
+                                                                     round(float(num_poly_trim_bases_umi)/num_poly_trim_umi,2)),
+             "{p1_trim}\tNum reads {p1} trimmed Primer side".format(p1 = args.poly_tail_primer_side, p1_trim = num_poly_trim_primer),
+             "{p2_trim}\tNum reads {p2} trimmed UMI side".format(p2 = args.poly_tail_umi_side,p2_trim = num_poly_trim_umi)])
+
         out_metrics_dropped.extend([
-            "Num read fragments dropped bad UMI : {bad_umi}".format(bad_umi = num_bad_umi)]
+            "{bad_umi}\tNum read fragments dropped bad UMI".format(bad_umi = num_bad_umi)]
         )
         total_dropped += num_bad_umi        
         
@@ -885,9 +883,9 @@ def main(args):
                                                                     num_syn_trimmed = num_r1_syn_trimmed,
                                                                     num_overlap = num_r1_r2_overlap,
                                                                     qual_trim_r1 = 0 if num_qual_trim_r1_bases == 0 else \
-                                                                    float(num_qual_trim_r1_bases)/(num_qual_trim_r1),
+                                                                    round(float(num_qual_trim_r1_bases)/(num_qual_trim_r1),2),
                                                                     qual_trim_r2 = 0 if num_qual_trim_r2_bases == 0 else \
-                                                                    float(num_qual_trim_r2_bases)/(num_qual_trim_r2),
+                                                                    round(float(num_qual_trim_r2_bases)/(num_qual_trim_r2),2),
                                                                     num_qual_trim_r1 = num_qual_trim_r1,
                                                                     num_qual_trim_r2 = num_qual_trim_r2)
                                                       
