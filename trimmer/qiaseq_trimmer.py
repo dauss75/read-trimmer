@@ -829,7 +829,7 @@ def main(args):
     p.join()
 
 
-    out_metrics_detail = [
+    out_metrics = [
         "{num_r1_pr_trimmed}\tNum Primer side reads with primer identified",
         "{num_syn_trimmed}\tNum Primer side reads with 3' synthetic oligo trimmed",
         "{num_r2_pr_trimmed}\tNum UMI side reads with 3' synthetic oligo trimmed (including primer)",
@@ -838,10 +838,6 @@ def main(args):
         "{qual_trim_r2}\tAvg num UMI side bases qual trimmed",
         "{num_qual_trim_r1}\tNum Primer side reads qual trimmed",
         "{num_qual_trim_r2}\tNum UMI side reads qual trimmed",
-    ]
-    out_metrics = [
-        "{tot_reads}\tTotal read fragments".format(tot_reads = total_reads),
-        "{num_after_trim}\tNum read fragments after trimming".format(num_after_trim = num_after_trim)
     ]
     out_metrics_dropped = [
         "{too_short}\tNum read fragments dropped too short".format(too_short = num_too_short),
@@ -860,7 +856,7 @@ def main(args):
         total_dropped += num_no_duplex
         
     if args.seqtype == "rna":
-        out_metrics_detail.extend(
+        out_metrics.extend(
             ["{p1_trim}\tAvg num bases {p1} trimmed Primer side".format(p1 = args.poly_tail_primer_side,
                                                                         p1_trim = 0 if num_poly_trim_bases_primer == 0 else \
                                                                         round(float(num_poly_trim_bases_primer)/num_poly_trim_primer,2)),
@@ -873,33 +869,29 @@ def main(args):
         out_metrics_dropped.extend([
             "{bad_umi}\tNum read fragments dropped bad UMI".format(bad_umi = num_bad_umi)]
         )
-        total_dropped += num_bad_umi        
-        
-    f_out_metrics_detail = open(args.out_metrics+".detail","w")
-    f_out_metrics        = open(args.out_metrics,"w")    
-                                                                          
-    out_metrics_lines_detail = "\n".join(out_metrics_detail).format(num_r1_pr_trimmed = num_r1_primer_trimmed,
-                                                                    num_r2_pr_trimmed = num_r2_primer_trimmed,
-                                                                    num_syn_trimmed = num_r1_syn_trimmed,
-                                                                    num_overlap = num_r1_r2_overlap,
-                                                                    qual_trim_r1 = 0 if num_qual_trim_r1_bases == 0 else \
-                                                                    round(float(num_qual_trim_r1_bases)/(num_qual_trim_r1),2),
-                                                                    qual_trim_r2 = 0 if num_qual_trim_r2_bases == 0 else \
-                                                                    round(float(num_qual_trim_r2_bases)/(num_qual_trim_r2),2),
-                                                                    num_qual_trim_r1 = num_qual_trim_r1,
-                                                                    num_qual_trim_r2 = num_qual_trim_r2)
-                                                      
-    f_out_metrics_detail.write(out_metrics_lines_detail)
-    f_out_metrics_detail.write("\n")
+        total_dropped += num_bad_umi       
+    out_metrics.extend([
+        "{tot_reads}\tTotal read fragments".format(tot_reads = total_reads),
+        "{num_after_trim}\tNum read fragments after trimming".format(num_after_trim = num_after_trim)])
+
+    out_metrics.extend(out_metrics_dropped)                                                                          
+    out_metrics_lines = "\n".join(out_metrics).format(num_r1_pr_trimmed = num_r1_primer_trimmed,
+                                                      num_r2_pr_trimmed = num_r2_primer_trimmed,
+                                                      num_syn_trimmed = num_r1_syn_trimmed,
+                                                      num_overlap = num_r1_r2_overlap,
+                                                      qual_trim_r1 = 0 if num_qual_trim_r1_bases == 0 else \
+                                                      round(float(num_qual_trim_r1_bases)/(num_qual_trim_r1),2),
+                                                      qual_trim_r2 = 0 if num_qual_trim_r2_bases == 0 else \
+                                                      round(float(num_qual_trim_r2_bases)/(num_qual_trim_r2),2),
+                                                      num_qual_trim_r1 = num_qual_trim_r1,
+                                                      num_qual_trim_r2 = num_qual_trim_r2)
     
-    out_metrics.extend(out_metrics_dropped)
-    out_metrics_lines = "\n".join(out_metrics)
+    f_out_metrics = open(args.out_metrics,"w")                                                      
     f_out_metrics.write(out_metrics_lines)
-    f_out_metrics.write("\n")
+    f_out_metrics.write("\n")   
     
     close_fh(f,f2)
     close_fh(f_out_r1,f2_out_r2)
-    f_out_metrics_detail.close()
     f_out_metrics.close()
         
     assert num_after_trim + total_dropped == total_reads, "Read accouting failed !"
