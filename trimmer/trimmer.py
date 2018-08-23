@@ -96,7 +96,7 @@ class PrimerDataStruct(object):
 
         # add close primer sequences for each primer based on pairwise clustering
         for p1 in self._primer_clusters:
-            for p2 in self._primer_clusters[p]:
+            for p2 in self._primer_clusters[p1]:
                 self._primer_info[p1][0][2].append(p2)
 
     @property
@@ -132,6 +132,7 @@ class Trimmer(object):
         self.tagname_primer            = kwargs["tagname_primer"]
         self.tagname_primer_error      = kwargs["tagname_primer_error"]
         self.tag_seperator             = kwargs["tag_seperator"]
+        self.no_tagnames               = kwargs["no_tagnames"]
         self.trim_custom_seq_adapter   = kwargs["trim_custom_seq_adapter"]
         self.custom_seq_adapter        = kwargs["custom_seq_adapter"]
         self.poly_tail_primer_side     = kwargs["poly_tail_primer_side"]

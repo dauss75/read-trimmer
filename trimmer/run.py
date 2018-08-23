@@ -65,7 +65,10 @@ def init_parser():
                         help = "Tag name for duplex tag. Default : %(default)s")
     
     parser.add_argument("--tag_seperator",default = "\t",
-                        help = "seperator for readID,umi and primer tags. Default : %(default)s. Choose none to have no tags.")
+                        help = "seperator for readID,umi and primer tags. Default : %(default)s")
+    
+    parser.add_argument("--no_tagnames", action = "store_true",
+                        help = "Choose this option to have no tagnames.")
     
     parser.add_argument("--primer3_bases_R1", required = False, default = 8,
                         type = int, help = "Number of bases on 3' end of primer to keep on R1. Default : %(default)s")
