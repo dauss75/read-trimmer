@@ -2,8 +2,10 @@ import string
 import collections
 import subprocess
 import itertools
+import re
 import edlib
 import os
+import multiprocessing
 
 from _utils import quality_trim
 
@@ -14,68 +16,60 @@ class PrimerDataStruct(object):
         '''
         '''
         self.primer_file = kwargs["primer_file"]
-        self.cdhit_est   = kwargs["cdhit_est"]
         self.k = kwargs["k"]
+        self.ncpu = kwargs["ncpu"]
+        self.seqtype = kwargs["seqtype"]
 
-        self._cdhit_fasta      =   self.primer_file + ".fasta"
-        self._cdhit_out_prefix =   self.primer_file + ".clusters.temp"
-        self._cdhit_out        =   self.primer_file + ".clusters.temp.clstr"
-        self._cdhit_out_parsed =   self.primer_file + ".clusters"
+        self._primer_col = 6 if self.seqtype == "rna" else 3 # rna or dna primer file parsing
 
-    def _parse_cdhit(self):
-        ''' Parse cd-hit output to usable format
+    def _pairwise_align(self,idx):
+        ''' Pairwise align two primers
+        :param tuple idx: (i,j) , the indices of the two primers to align
+        :rtype tuple
+        :returns The shorter and longer primer, (-1,-1) if no alignment
         '''
+        i,j = idx
+        if i == j:
+            return(-1,-1)
+        shorter_primer,longer_primer = (primers[i],primers[j]) \
+                                       if len(primers[i]) < len(primers[j]) \
+                                          else (primers[j],primers[i])
+        editdist_cutoff = int(0.1*len(shorter_primer))
+        temp = edlib.align(shorter_primer,longer_primer,mode="HW",k=editdist_cutoff) # align in infix mode,
+        if temp["editDistance"] != -1:
+            return (shorter_primer,longer_primer)
+        else:
+            return (-1,-1)
+        
+        
+    def _cluster_primer_seqs(self):
+        ''' Pairwise comparison of primers , store information
+        for other closley matching primers for each primer
+        '''
+        global primers
         primers = []
-        i=0
-
+        self._primer_clusters = collections.defaultdict(set)
         with open(self.primer_file,"r") as IN:
             for line in IN:
-                primers.append(line.strip("\n\r").split("\t")[-1])
+                primer = line.strip("\n\r").split("\t")[self._primer_col]
+                if primer not in primers:
+                    primers.append(primer)
 
-        cluster_info = collections.defaultdict(list)
-        with open(self._cdhit_out,"r") as IN:
-            for line in IN:
-                if line.startswith(">"):
-                    cluster_num = int(line.strip("\n").split(" ")[1])
-                    new_cluster = True
-                else:
-                    temp = line.strip("\n").split("\t")[1].split(",")[1].strip().split("...")[0].strip(">")
-                    primer = primers[int(temp)]
-                    cluster_info[str(cluster_num)].append(primer)
+        pairwise_indices = ((i,j) for j in range(0,len(primers)) \
+                            for i in range(0,len(primers)))
 
-        with open(self._cdhit_out_parsed,"w") as OUT:
-            for cluster in cluster_info:
-                if len(cluster_info[cluster]) > 1:
-                    OUT.write(",".join(cluster_info[cluster])+"\n")
-        
-
-    def _cluster_primer_seqs(self):
-        ''' Cluster similar primer sequences for use later in primer trimming
-        '''
-        # create a fasta of the primers
-        cmd1 = (
-            """ i=0; while read chrom pos strand primer; do echo ">"$i; echo $primer|tr -d '\r'; """
-            """ i=$(($i+1)); done < {primerfile} > {fasta}; """.format(
-                primerfile = self.primer_file,fasta=self._cdhit_fasta)
-        )
-        subprocess.check_call(cmd1,shell=True)
-        # run cd-hit
-        cmd2 = "{cdhit_est} -i {fasta} -o {out_prefix}".format(
-            cdhit_est = self.cdhit_est,
-            fasta = self._cdhit_fasta,
-            out_prefix = self._cdhit_out_prefix)
-        subprocess.check_call(cmd2,shell=True)
-        # parse output to usable format
-        self._parse_cdhit()
-
-    def _cleanup(self):
-        ''' Clean-up temp files
-        '''
-        for f in [self._cdhit_fasta,self._cdhit_out_prefix,self._cdhit_out]:
-            os.remove(f)
+        p = multiprocessing.Pool(self.ncpu)
+        for res in p.imap(self._pairwise_align,pairwise_indices,chunksize=int(len(primers)/self.ncpu)):
+            if res[0] == -1:
+                continue
+            shorter_primer,longer_primer = res
+            self._primer_clusters[shorter_primer].add(longer_primer)
+            self._primer_clusters[longer_primer].add(shorter_primer)
+        p.close()
+        p.join()                    
             
     def _create_primer_search_datastruct(self):
-        '''
+        ''' Create k-mer index on the primers
         '''
         self._primer_kmers = collections.defaultdict(set)
         self._primer_info = collections.defaultdict(list) 
@@ -100,18 +94,10 @@ class PrimerDataStruct(object):
 
                 primer_id+=1
 
-        # add close primer sequences for each primer based on cd-hit results
-        with open(self._cdhit_out_parsed,"r") as IN:
-            for line in IN:
-                temp = line.strip("\n").split(",")
-                
-                for p1,p2 in itertools.product(temp,repeat=2):                    
-                    assert p1 in self._primer_info and p2 in self._primer_info,"Primer(s) from cd-hit not in PrimerFile !!"
-                    if p1 == p2: # same primer sequences
-                        continue
-
-                    self._primer_info[p1][0][1].append(p2)
-                    self._primer_info[p2][0][1].append(p1)                
+        # add close primer sequences for each primer based on pairwise clustering
+        for p1 in self._primer_clusters:
+            for p2 in self._primer_clusters[p1]:
+                self._primer_info[p1][0][2].append(p2)
 
     @property
     def primer_search_datastruct(self):
@@ -119,7 +105,6 @@ class PrimerDataStruct(object):
         '''
         self._cluster_primer_seqs()
         self._create_primer_search_datastruct()
-        self._cleanup()
         return (self._primer_info,self._primer_kmers)
 
 class Trimmer(object):
@@ -132,29 +117,38 @@ class Trimmer(object):
         self.is_nextseq                = kwargs["is_nextseq"]
         self.max_mismatch_rate_primer  = kwargs["max_mismatch_rate_primer"]
         self.max_mismatch_rate_overlap = kwargs["max_mismatch_rate_overlap"]
-        self.synthetic_oligo_len       = kwargs["synthetic_oligo_len"]
-        self.overlap_check_len         = kwargs["overlap_check_len"]
+        self.umi_len                   = kwargs["umi_len"]
+        self.common_seq_len            = kwargs["common_seq_len"]
+        self.check_primer_side         = kwargs["check_primer_side"]
+        self.overlap_check_len         = kwargs["overlap_check_len"]        
+        self.min_primer_side_len       = kwargs["min_primer_side_len"]
+        self.min_umi_side_len          = kwargs["min_umi_side_len"]
+        self.umi_filter_min_bq         = kwargs["umi_filter_min_bq"]
+        self.umi_filter_max_lowQ_bases = kwargs["umi_filter_max_lowQ_bases"]
+        self.umi_filter_max_Ns         = kwargs["umi_filter_max_Ns"]
         self.primer3_R1                = kwargs["primer3_R1"]
         self.primer3_R2                = kwargs["primer3_R2"]
         self.tagname_umi               = kwargs["tagname_umi"]
         self.tagname_primer            = kwargs["tagname_primer"]
-        self.tagname_primer_error      = kwargs["tagname_primer_error"]        
+        self.tagname_primer_error      = kwargs["tagname_primer_error"]
+        self.tag_seperator             = kwargs["tag_seperator"]
+        self.no_tagnames               = kwargs["no_tagnames"]
         self.trim_custom_seq_adapter   = kwargs["trim_custom_seq_adapter"]
+        self.custom_seq_adapter        = kwargs["custom_seq_adapter"]
+        self.poly_tail_primer_side     = kwargs["poly_tail_primer_side"]
+        self.poly_tail_umi_side        = kwargs["poly_tail_umi_side"]
         
-        # user can provide, if not defaults used
-        self.trim_polyA = True if "polyA_trim" in kwargs else False
-        self.check_primer_side = True if "check_primer_side" in kwargs else False
-        self.flip_R1_R2 = True if "flip_R1_R2" in kwargs else False
-
         # user can overide these defaults if needed
-        self._k = 8
-        self._r = 30
+        self._k = 8  # kmer size
+        self._r = 30 # how much of the read to use to build kmers
 
         # other constants
         self._revcomp_table             = bytes.maketrans(b"ACTG", b"TGAC")
         self._padding                   = 5
-        self._custom_sequencing_adapter = b"AATGTACAGTATTGCGTTTTG"
-        
+        self._poly_tail_motif = {
+            "polyA" : re.compile(b"^([ACGTN]*?[CGTN])([A]{8,}[ACGNT]*$)"),
+            "polyT" : re.compile(b"^([ACGTN]*?[CGAN])([T]{8,}[ACGNT]*$)")
+        }        
     # kmer size
     @property
     def k(self):
@@ -179,10 +173,10 @@ class Trimmer(object):
         :rtype int
         :returns end pos of adapter, -1 if not found
         '''
-        alignment = edlib.align(self._custom_sequencing_adapter,
-                                r1_seq[0:len(self._custom_sequencing_adapter)+3],
+        alignment = edlib.align(self.custom_seq_adapter,
+                                r1_seq[0:len(self.custom_seq_adapter)+3],
                                 mode="SHW",task="locations")
-        if float(alignment["editDistance"])/len(self._custom_sequencing_adapter) <= 0.18:
+        if float(alignment["editDistance"])/len(self.custom_seq_adapter) <= 0.18:
             return alignment["locations"][-1][1]
         else:
             return -1
@@ -208,7 +202,7 @@ class Trimmer(object):
             if oligo in primer_kmer:
                 for c in primer_kmer[oligo]:
                     candidates.add(c)
-                    for similar_primer in primer_info[c][0][1]: # iterate over all similar primers to this primer
+                    for similar_primer in primer_info[c][0][2]: # iterate over all similar primers to this primer
                         candidates.add(similar_primer)
         
         if len(candidates) == 0: # no hits in the index, exhaustive search over all primers
@@ -239,7 +233,7 @@ class Trimmer(object):
                     best_primer_len = primer_len
 
         assert best_score is not None
-            
+
         if best_score <= self.max_mismatch_rate_primer:
             return (best_align["locations"][-1][1], best_primer, best_editdist, best_score) # return 0 based position where primer ends on the read
         else:
@@ -270,9 +264,9 @@ class Trimmer(object):
                  (-1,-1) if no alignment within mismatch rate
         '''  
         query = self.revcomp(r2_seq[self.synthetic_oligo_len:self.synthetic_oligo_len+self.overlap_check_len])
-        assert len(query) != 0,"{r1_seq}\t{r2_seq}".format(r1_seq=r1_seq.decode("ascii"),r2_seq=r2_seq.decode("ascii"))  # edlib hangs forever on empty strings     
+        if len(query) == 0:
+            return (-1,-1)
         alignment = edlib.align(query,r1_seq,mode="HW",task="locations")
-
         if float(alignment["editDistance"])/self.overlap_check_len <= 0.12:
             return alignment["locations"][-1]
         else:
@@ -282,10 +276,9 @@ class Trimmer(object):
         '''
         '''
         query = self.revcomp(r1_seq[primer_end+1:primer_end+1+self.overlap_check_len])
-        assert len(query) != 0,"{r1_seq}\t{primer_end}\t{r2_seq}".format(r1_seq=r1_seq.decode("ascii"),primer_end=primer_end,r2_seq=r2_seq.decode("ascii"))        
-        alignment = edlib.align(query,r2_seq,mode="HW",task="locations")
-
-        
+        if len(query) == 0:
+            return (-1,-1)
+        alignment = edlib.align(query,r2_seq,mode="HW",task="locations")        
         if float(alignment["editDistance"])/self.overlap_check_len <= 0.12:
             return alignment["locations"][-1]
         else:
@@ -298,3 +291,17 @@ class Trimmer(object):
         ''' Reverse complement a sequence
         '''
         return seq.translate(self._revcomp_table)[::-1]
+
+    def poly_trim(self,seq,tail):
+        ''' Return start pos of polyA/T tail , if present
+        returns -1 if not found
+
+        :param bytes seq: The read sequence to trim
+        :rtype int
+        :returns the polyA start position
+        '''
+        match = self._poly_tail_motif[tail].match(seq)
+        if match: # found polyA
+            return match.start(2)
+        else:
+            return -1

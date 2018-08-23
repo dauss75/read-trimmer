@@ -6,6 +6,8 @@ import sys
 
 import edlib
 
+from pprint import pprint
+
 from trimmer import PrimerDataStruct, Trimmer
 from _utils import two_fastq_heads
 
@@ -26,6 +28,7 @@ class QiaSeqTrimmer(Trimmer):
         self._r2_info = None
 
         self.seqtype = kwargs["seqtype"]
+        self.synthetic_oligo_len = self.umi_len + self.common_seq_len
         
         # some duplex specific params
         self.tagname_duplex = kwargs["tagname_duplex"]
@@ -55,8 +58,28 @@ class QiaSeqTrimmer(Trimmer):
         return self._is_too_short
     @property
     def is_odd_structure(self):
-        return self._is_odd_structure    
+        return self._is_odd_structure
+    @property
+    def is_bad_umi(self):
+        return self._is_bad_umi
+    @property
+    def is_r1_qual_trim(self):
+        return self._is_r1_qual_trim
+    @property
+    def is_r2_qual_trim(self):
+        return self._is_r2_qual_trim
+    @property
+    def is_r1_poly_tail_trim(self):
+        return self._is_r1_poly_tail_trim
+    @property
+    def is_r2_poly_tail_trim(self):
+        return self._is_r2_poly_tail_trim
     
+
+    '''
+    Assumption made is that R1 is the Primer side , R2 is the UMI side.
+    If the structure is the opposite , one can do so by flipping R1 and R2 setters
+    '''
     # R1 info
     @property
     def r1_info(self):
@@ -71,6 +94,7 @@ class QiaSeqTrimmer(Trimmer):
     @r2_info.setter
     def r2_info(self,info_tuple):
         self._r2_info = info_tuple
+        
         
     # duplex specific vars
     @property
@@ -128,30 +152,55 @@ class QiaSeqTrimmer(Trimmer):
         idx          = read_id.find(b" ") if read_id.find(b" ") != -1 else len(read_id)
         primer_id    = primer_id.encode("ascii")
         primer_error = primer_error.encode("ascii")
-        
-        umi_info    = b":".join([self.tagname_umi,b"Z",umi])
-        primer_info = b":".join([self.tagname_primer,b"Z",primer_id])
-        primer_error_info = b":".join([self.tagname_primer_error,b"Z",primer_error])
+
+        if self.no_tagnames:
+            umi_info = umi
+            primer_info = primer_id
+            primer_error_info = primer_error
+        else:
+            umi_info    = b":".join([self.tagname_umi,b"Z",umi])
+            primer_info = b":".join([self.tagname_primer,b"Z",primer_id])
+            primer_error_info = b":".join([self.tagname_primer_error,b"Z",primer_error])
         
         if self._duplex_tag is None:
-            return b"\t".join([read_id[0:idx],umi_info,primer_info,primer_error_info])
+            return self.tag_seperator.join([read_id[0:idx],umi_info,primer_info,primer_error_info])
         else:
             duplex_info = b":".join([self.tagname_duplex,b"Z",self._duplex_tag])
-            return b"\t".join([read_id[0:idx],umi_info,primer_info,primer_error_info,duplex_info])
+            return self.tag_seperator.join([read_id[0:idx],umi_info,primer_info,primer_error_info,duplex_info])
+
+    def _umi_filter_rna(self,umi,umi_qual):
+        ''' filter umi based on sequence and base qualities        
+        '''
+        num_Ns = umi.count(b"N")
+        if num_Ns > self.umi_filter_max_Ns:
+            return True
+        counter = 0
+        base = 33
+        for q in umi_qual.decode("ascii"):
+            qual = ord(q) - base
+            if qual < self.umi_filter_min_bq:
+                counter+=1
+                
+        if counter < self.umi_filter_max_lowQ_bases:
+            return False
         
     def qiaseq_trim(self,primer_datastruct):
         """ Trim QiaSeq DNA/RNA reads
         """
         # init some bools
-        self._is_r1_primer_trimmed      = False
-        self._is_r1_syn_trimmed         = False
-        self._is_r2_primer_trimmed      = False
-        self._is_r1_r2_overlap          = False
-        self._is_too_short              = False
-        self._is_odd_structure          = False
+        self._is_r1_primer_trimmed       = False
+        self._is_r1_syn_trimmed          = False
+        self._is_r2_primer_trimmed       = False
+        self._is_r1_r2_overlap           = False
+        self._is_too_short               = False
+        self._is_odd_structure           = False
+        self._is_bad_umi                 = False # only used for RNA
 
-        self.is_qual_trim_r1            = False
-        self.is_qual_trim_r2            = False
+        self._is_r1_qual_trim            = False
+        self._is_r2_qual_trim            = False
+        
+        self._is_r1_poly_tail_trim       = False # only used for RNA
+        self._is_r2_poly_tail_trim       = False # only used for RNA
         
         self._is_duplex_adapter_present  = False
         self._duplex_tag                 = None
@@ -177,18 +226,26 @@ class QiaSeqTrimmer(Trimmer):
         if self.is_duplex:
             adapter_end_pos,self._duplex_tag = self._id_duplex_tag(r2_seq)
             if adapter_end_pos == -1: # drop read                
-                return
+                return            
             # update synthetic oligo len
             self._is_duplex_adapter_present = True
             self.synthetic_oligo_len = 12 + (adapter_end_pos + 1) #(this can be updated again below if umi starts with a N, assuming fixed 12 b.p UMI)
             
         # get umi
-        synthetic_oligo_len = self.synthetic_oligo_len   
+        synthetic_oligo_len = self.synthetic_oligo_len        
         if not r2_seq.startswith(b"N"):
-            umi = r2_seq[0:12]
+            umi = r2_seq[0:self.umi_len]
+            umi_qual = r2_qual[0:self.umi_len]
         else:
-            umi = r2_seq[1:13]            
+            umi = r2_seq[1:self.umi_len+1]
+            umi_qual = r2_qual[1:self.umi_len+1]
             self.synthetic_oligo_len += 1
+            
+        if self.seqtype == "rna":
+            self._is_bad_umi = self._umi_filter_rna(umi,umi_qual)            
+            if self._is_bad_umi: # drop read
+                self.synthetic_oligo_len = synthetic_oligo_len
+                return
         
         # quality trimming        
         r1_qual_end = self.quality_trim_(r1_qual,r1_seq,14)
@@ -196,10 +253,10 @@ class QiaSeqTrimmer(Trimmer):
         temp = len(r1_seq)  - r1_qual_end
         self.r1_qual_trim_len = temp
         if temp > 0:
-            self.is_qual_trim_r1 = True
+            self._is_r1_qual_trim = True
         temp = len(r2_seq)  - r2_qual_end
         if temp > 0:
-            self.is_qual_trim_r2 = True
+            self._is_r2_qual_trim = True
         self.r2_qual_trim_len = temp
         
         # update r1,r2
@@ -208,12 +265,12 @@ class QiaSeqTrimmer(Trimmer):
         r2_seq  = r2_seq[0:r2_qual_end]
         r2_qual = r2_qual[0:r2_qual_end]        
                     
-        if len(r1_seq) < 50 or len(r2_seq) < 50: # skip reads too short after qual trimming
+        if len(r1_seq) < self.min_primer_side_len or len(r2_seq) < self.min_umi_side_len: # skip reads too short after qual trimming
             self._is_too_short = True
             self.synthetic_oligo_len = synthetic_oligo_len
             return
             
-        # track original qual trimmed lengths
+        # track qual trimmed lengths
         r1_len = len(r1_seq)
         r2_len = len(r2_seq)
 
@@ -224,8 +281,8 @@ class QiaSeqTrimmer(Trimmer):
             r1_id = self._reformat_readid(r1_id,umi,primer_id,primer_error)
             r2_id = self._reformat_readid(r2_id,umi,primer_id,primer_error)
             # just trim synthetic part on R2
-            r2_seq = r2_seq[synthetic_oligo_len:]
-            r2_qual = r2_qual[synthetic_oligo_len:]            
+            r2_seq = r2_seq[self.synthetic_oligo_len:]
+            r2_qual = r2_qual[self.synthetic_oligo_len:]            
             self._r1_info = (r1_id,r1_seq,r1_qual)
             self._r2_info = (r2_id,r2_seq,r2_qual)
             self.synthetic_oligo_len = synthetic_oligo_len            
@@ -280,22 +337,13 @@ class QiaSeqTrimmer(Trimmer):
         if r1_trim_start >= r1_trim_end: # weird reads , mostly only primer on R1 , no endo seq
             self._is_odd_structure = True
             self.synthetic_oligo_len = synthetic_oligo_len
-            return
-            
+            return            
         
         r1_seq  = r1_seq[r1_trim_start:r1_trim_end]
         r1_qual = r1_qual[r1_trim_start:r1_trim_end]
         r2_seq  = r2_seq[r2_trim_start:r2_trim_end]
         r2_qual = r2_qual[r2_trim_start:r2_trim_end]
-            
-        # update read ids
-        r1_id = self._reformat_readid(r1_id,umi,primer_info,primer_error)
-        r2_id = self._reformat_readid(r2_id,umi,primer_info,primer_error)
-        
-        # update read info tuple
-        self._r1_info = (r1_id,r1_seq,r1_qual)
-        self._r2_info = (r2_id,r2_seq,r2_qual)
-        
+
         # update bools
         self._is_r1_primer_trimmed = True
         if r1_trim_end < r1_len:
@@ -303,6 +351,40 @@ class QiaSeqTrimmer(Trimmer):
         if r2_trim_end < r2_len:
             self._is_r2_primer_trimmed = True        
         self._is_r1_r2_overlap = primer_side_overlap or syn_side_overlap
+        
+        # polyA/T trimming if speRNA
+        if self.seqtype == "rna":
+            if self.poly_tail_primer_side != "none":
+                r1_poly_tail_pos = self.poly_trim(r1_seq,self.poly_tail_primer_side)
+                if r1_poly_tail_pos != -1:
+                    self.r1_poly_tail_trim_len = len(r1_seq) - r1_poly_tail_pos
+                    self._is_r1_poly_tail_trim = True
+                    
+                    r1_seq  = r1_seq[0:r1_poly_tail_pos]
+                    r1_qual = r1_qual[0:r1_poly_tail_pos]
+                    
+            if self.poly_tail_umi_side != "none":
+                r2_poly_tail_pos = self.poly_trim(r2_seq,self.poly_tail_umi_side)
+                if r2_poly_tail_pos != -1:
+                    self.r2_poly_tail_trim_len = len(r2_seq) - r2_poly_tail_pos
+                    self._is_r2_poly_tail_trim = True
+                    
+                    r2_seq  = r2_seq[0:r2_poly_tail_pos]
+                    r2_qual = r2_qual[0:r2_poly_tail_pos]
+                    
+        # final read length check
+        if len(r1_seq) < self.min_primer_side_len or len(r2_seq) < self.min_umi_side_len:
+            self._is_too_short = True
+            self.synthetic_oligo_len = synthetic_oligo_len
+            return
+        
+        # update read ids
+        r1_id = self._reformat_readid(r1_id,umi,primer_info,primer_error)
+        r2_id = self._reformat_readid(r2_id,umi,primer_info,primer_error)
+        
+        # update read info tuple
+        self._r1_info = (r1_id,r1_seq,r1_qual)
+        self._r2_info = (r2_id,r2_seq,r2_qual)        
 
         # reset variable
         self.synthetic_oligo_len = synthetic_oligo_len
@@ -321,16 +403,27 @@ def trim_custom_sequencing_adapter(args,buffers):
                              seqtype = args.seqtype,
                              max_mismatch_rate_primer = args.max_mismatch_rate_primer,
                              max_mismatch_rate_overlap = args.max_mismatch_rate_overlap,
-                             synthetic_oligo_len = args.synthetic_oligo_len,
+                             custom_seq_adapter = args.custom_seq_adapter,
+                             umi_len = args.umi_len,                             
+                             common_seq_len = args.common_seq_len,
                              overlap_check_len = args.overlap_check_len,
+                             min_primer_side_len = args.min_primer_side_len,
+                             min_umi_side_len = args.min_umi_side_len,
+                             umi_filter_min_bq = args.umi_filter_min_bq,
+                             umi_filter_max_lowQ_bases = args.umi_filter_max_lowQ_bases,
+                             umi_filter_max_Ns = args.umi_filter_max_Ns,
                              check_primer_side = args.check_primer_side,
                              trim_custom_seq_adapter = False,
+                             poly_tail_primer_side = args.poly_tail_primer_side,
+                             poly_tail_umi_side = args.poly_tail_umi_side,
                              primer3_R1 = args.primer3_bases_R1,
                              primer3_R2 = args.primer3_bases_R2,
                              tagname_duplex = args.tagname_duplex,
                              tagname_umi = args.tagname_umi,
                              tagname_primer = args.tagname_primer,
-                             tagname_primer_error = args.tagname_primer_error)
+                             tagname_primer_error = args.tagname_primer_error,
+                             tag_seperator = args.tag_seperator,
+                             no_tagnames = args.no_tagnames)
     
     buff_r1,buff_r2 = buffers
     r1_lines = buff_r1.split(b"\n")
@@ -346,8 +439,12 @@ def trim_custom_sequencing_adapter(args,buffers):
             r1_seq,r2_seq = line
         elif i % 4 == 0: # qual
             num_reads+=1
-            if trim_obj.custom_sequencing_adapter_check(r1_seq) != -1:
-                num_reads_have_adapter += 1
+            if args.custom_seq_adapter_side == "primer":
+                seq = r1_seq
+            else:
+                seq = r2_seq
+            if trim_obj.custom_sequencing_adapter_check(seq) != -1:
+                num_reads_have_adapter += 1                
         i+=1
     return (num_reads,float(num_reads_have_adapter)/num_reads > 0.95)
     
@@ -360,49 +457,72 @@ def wrapper_func(args,buffer_):
     :param bytestring buffers_: A bytestring of length buffersize returned by the iterate_fastq function
 
     :rtype tuple
-    :returns trimmed R1,R2 lines and metrics as tuples
+    :returns trimmed R1,R2 lines and metrics as a tuple
     '''
-    trim_obj = QiaSeqTrimmer(is_nextseq = args.is_nextseq,
-                             is_duplex = args.is_duplex,
-                             seqtype = args.seqtype,
-                             max_mismatch_rate_primer = args.max_mismatch_rate_primer,
-                             max_mismatch_rate_overlap = args.max_mismatch_rate_overlap,
-                             synthetic_oligo_len = args.synthetic_oligo_len,
-                             overlap_check_len = args.overlap_check_len,
-                             check_primer_side = args.check_primer_side,
-                             trim_custom_seq_adapter = args.to_trim_custom_adapter,
-                             primer3_R1 = args.primer3_bases_R1,
-                             primer3_R2 = args.primer3_bases_R2,
-                             tagname_duplex = args.tagname_duplex,
-                             tagname_umi = args.tagname_umi,
-                             tagname_primer = args.tagname_primer,
-                             tagname_primer_error = args.tagname_primer_error)
-                                     
+    trim_obj = QiaSeqTrimmer(
+        is_nextseq                = args.is_nextseq,
+        is_duplex                 = args.is_duplex,
+        seqtype                   = args.seqtype,
+        max_mismatch_rate_primer  = args.max_mismatch_rate_primer,
+        max_mismatch_rate_overlap = args.max_mismatch_rate_overlap,
+        custom_seq_adapter        = args.custom_seq_adapter,                            
+        umi_len                   = args.umi_len,
+        common_seq_len            = args.common_seq_len,
+        overlap_check_len         = args.overlap_check_len,
+        min_primer_side_len       = args.min_primer_side_len,
+        min_umi_side_len          = args.min_umi_side_len,
+        umi_filter_min_bq         = args.umi_filter_min_bq,
+        umi_filter_max_lowQ_bases = args.umi_filter_max_lowQ_bases,
+        umi_filter_max_Ns         = args.umi_filter_max_Ns,                             
+        check_primer_side         = args.check_primer_side,
+        trim_custom_seq_adapter   = args.to_trim_custom_adapter,
+        primer3_R1                = args.primer3_bases_R1,
+        primer3_R2                = args.primer3_bases_R2,
+        poly_tail_primer_side     = args.poly_tail_primer_side,
+        poly_tail_umi_side        = args.poly_tail_umi_side,  
+        tagname_duplex            = args.tagname_duplex,
+        tagname_umi               = args.tagname_umi,
+        tagname_primer            = args.tagname_primer,
+        tagname_primer_error      = args.tagname_primer_error,
+        tag_seperator             = args.tag_seperator,
+        no_tagnames               = args.no_tagnames
+    )
+    
+    # unpack input byte string                                 
     buff_r1,buff_r2 = buffer_
     r1_lines        = buff_r1.split(b"\n")
     r2_lines        = buff_r2.split(b"\n")
     
-    # init counters
+    # init some counters
+    # general bookkeeping
+    num_reads_after_trim  = 0    
     num_too_short         = 0
     num_odd               = 0
+    num_bad_umi           = 0
     num_no_duplex         = 0
     num_reads             = 0
     num_r1_primer_trimmed = 0
     num_r1_syn_trimmed    = 0
     num_r2_primer_trimmed = 0
-    num_r1_r2_overlap     = 0
-
+    num_r1_r2_overlap     = 0    
+    # duplex specific
     num_CC = 0
     num_TT = 0
     num_NN = 0
-    
+    # quality trimming
     num_qual_trim_bases_r1 = 0
     num_qual_trim_bases_r2 = 0
     num_qual_trim_r1       = 0
     num_qual_trim_r2       = 0
-    
-    out       = []
-    out_lines = []
+    # polyA/T trimming
+    num_poly_trim_bases_primer = 0
+    num_poly_trim_bases_umi    = 0
+    num_poly_trim_primer       = 0
+    num_poly_trim_umi          = 0
+
+    # store r1 and r2 lines
+    out_lines_r1_bucket = []
+    out_lines_r2_bucket = []
     
     i = 1
     for line in zip(r1_lines,r2_lines):
@@ -419,11 +539,22 @@ def wrapper_func(args,buffer_):
 
             r1_qual,r2_qual = line
             # have R1 and R2 ready to process now
-            trim_obj.r1_info = (r1_readid,r1_seq,r1_qual)
-            trim_obj.r2_info = (r2_readid,r2_seq,r2_qual)
+            if args.is_r2_primer_side:
+                trim_obj.r1_info = (r2_readid,r2_seq,r2_qual)
+                trim_obj.r2_info = (r1_readid,r1_seq,r1_qual)                
+            else:
+                trim_obj.r1_info = (r1_readid,r1_seq,r1_qual)
+                trim_obj.r2_info = (r2_readid,r2_seq,r2_qual)
 
             trim_obj.qiaseq_trim(primer_datastruct)
 
+            if trim_obj.is_r1_poly_tail_trim:
+                num_poly_trim_bases_primer += trim_obj.r1_poly_tail_trim_len
+                num_poly_trim_primer += 1
+            if trim_obj.is_r2_poly_tail_trim:
+                num_poly_trim_bases_umi += trim_obj.r2_poly_tail_trim_len
+                num_poly_trim_umi += 1
+                
             if trim_obj.is_too_short:
                 num_too_short+=1
                 i+=1
@@ -432,21 +563,32 @@ def wrapper_func(args,buffer_):
                 num_odd+=1
                 i+=1
                 continue
-            elif not trim_obj.is_duplex_adapter_present:
+            elif trim_obj.is_bad_umi:
+                assert args.seqtype == "rna","UMI filter only applicable for speRNA reads!"
+                num_bad_umi+=1
+                i+=1
+                continue
+            
+            if args.is_duplex and not trim_obj.is_duplex_adapter_present:
                 num_no_duplex+=1
                 i+=1
                 continue
             
-            if trim_obj.is_qual_trim_r1:
+            if trim_obj.is_r1_qual_trim:
                 num_qual_trim_bases_r1 += trim_obj.r1_qual_trim_len
                 num_qual_trim_r1 += 1
-            if trim_obj.is_qual_trim_r2:
+            if trim_obj.is_r2_qual_trim:
                 num_qual_trim_bases_r2 += trim_obj.r2_qual_trim_len
                 num_qual_trim_r2 += 1            
             
             # retrieve trimmed sequences
-            trimmed_r1_info = trim_obj.r1_info
-            trimmed_r2_info = trim_obj.r2_info
+            if args.is_r2_primer_side:
+                trimmed_r2_info = trim_obj.r1_info
+                trimmed_r1_info = trim_obj.r2_info
+            else:
+                trimmed_r1_info = trim_obj.r1_info
+                trimmed_r2_info = trim_obj.r2_info
+            
             trimmed_r1_lines = b"\n".join([trimmed_r1_info[0],trimmed_r1_info[1],b"+",trimmed_r1_info[2]])
             trimmed_r2_lines = b"\n".join([trimmed_r2_info[0],trimmed_r2_info[1],b"+",trimmed_r2_info[2]])
 
@@ -470,15 +612,17 @@ def wrapper_func(args,buffer_):
                 else:
                     raise Exception("Invalid duplex tag : {}".format(duplex_tag.decode("ascii")))
                     
-            out_lines.append((trimmed_r1_lines,trimmed_r2_lines))
+            out_lines_r1_bucket.append(trimmed_r1_lines)
+            out_lines_r2_bucket.append(trimmed_r2_lines)
+            num_reads_after_trim += 1
             
         i+=1
         
-    metrics = (num_r1_primer_trimmed,num_r1_syn_trimmed,num_r2_primer_trimmed,num_r1_r2_overlap,num_too_short,num_odd,num_reads,num_qual_trim_bases_r1,num_qual_trim_bases_r2,num_qual_trim_r1,num_qual_trim_r2,num_CC,num_TT,num_NN,num_no_duplex)
+    metrics = (num_r1_primer_trimmed,num_r1_syn_trimmed,num_r2_primer_trimmed,num_r1_r2_overlap,num_too_short,num_odd,num_bad_umi,num_reads,num_qual_trim_bases_r1,num_qual_trim_bases_r2,num_qual_trim_r1,num_qual_trim_r2,num_poly_trim_bases_primer,num_poly_trim_primer,num_poly_trim_bases_umi,num_poly_trim_umi,num_CC,num_TT,num_NN,num_no_duplex,num_reads_after_trim)
+    out_lines_R1 = b"\n".join(out_lines_r1_bucket)
+    out_lines_R2 = b"\n".join(out_lines_r2_bucket)
 
-    out = [out_lines, metrics]
-            
-    return out
+    return (out_lines_R1,out_lines_R2,metrics)
 
             
 def iterate_fastq(f,f2,ncpu,buffer_size=4*4*1024**2):
@@ -572,33 +716,36 @@ def main(args):
     out_r2      = args.out_r2
     out_metrics = args.out_metrics
     # convert to bytestring
-    args.tagname_primer = args.tagname_primer.encode("ascii")
+    args.tagname_primer       = args.tagname_primer.encode("ascii")
     args.tagname_primer_error = args.tagname_primer_error.encode("ascii")    
-    args.tagname_umi = args.tagname_umi.encode("ascii")
-    args.tagname_duplex = args.tagname_duplex.encode("ascii")
-    
+    args.tagname_umi          = args.tagname_umi.encode("ascii")
+    args.tagname_duplex       = args.tagname_duplex.encode("ascii")
+    args.tag_seperator        = args.tag_seperator.encode("ascii")
 
     global primer_datastruct
-    f_out_metrics = open(args.out_metrics,"w")
     
-    primer_datastruct = PrimerDataStruct(k=8,primer_file=args.primer_file,cdhit_est=args.cdhit_est).primer_search_datastruct
+    primer_datastruct = PrimerDataStruct(k=8,primer_file=args.primer_file,
+                                         ncpu=args.ncpu,seqtype=args.seqtype).primer_search_datastruct
     l = multiprocessing.Lock()
 
     logger.info("\n{}\n".format("--"*10))
     logger.info("Created Primer Datastruct\n")
 
     # check custom sequencing adapter in the first chunk of the fastq ~ 11000 reads
-    f,f2 = open_fh(r1,r2)
-    for buffers in iterate_fastq(f,f2,1):
-        assert len(buffers) == 1
-        num_reads, to_trim_custom_adapter = trim_custom_sequencing_adapter(args,buffers[0])
-        break
+    if not args.trim_custom_seq_adapter:
+        f,f2 = open_fh(r1,r2)
+        for buffers in iterate_fastq(f,f2,1):
+            assert len(buffers) == 1
+            num_reads, to_trim_custom_adapter = trim_custom_sequencing_adapter(args,buffers[0])
+            break
     
-    logger.info("Checked first {n} reads for custom sequencing adapter.".format(n=num_reads))
-    if to_trim_custom_adapter:
-        logger.info("Custom sequencing adapter present in > 95% reads")
-
-    args.to_trim_custom_adapter = to_trim_custom_adapter
+        logger.info("Checked first {n} reads for custom sequencing adapter.".format(n=num_reads))
+        if to_trim_custom_adapter:
+            logger.info("Custom sequencing adapter present in > 95% reads")
+        args.to_trim_custom_adapter = to_trim_custom_adapter
+    else: # force trimming of custom sequencing adapter , useful for ion reads
+        args.to_trim_custom_adapter = args.trim_custom_seq_adapter
+        
     logger.info("\nRunning program with args : {}\n".format(args))
     close_fh(f,f2)
     
@@ -608,15 +755,22 @@ def main(args):
     num_r1_r2_overlap     = 0
     num_too_short         = 0
     num_odd               = 0
+    num_bad_umi           = 0
     num_no_duplex         = 0
     total_reads           = 0
+    num_after_trim        = 0
     
     num_qual_trim_r1_bases = 0
     num_qual_trim_r2_bases = 0
     num_qual_trim_r1 = 0
     num_qual_trim_r2 = 0
 
+    num_poly_trim_bases_primer  = 0
+    num_poly_trim_primer        = 0
+    num_poly_trim_bases_umi     = 0
+    num_poly_trim_umi           = 0 
 
+    
     num_CC = 0
     num_TT = 0
     num_NN = 0
@@ -632,7 +786,7 @@ def main(args):
     for chunks in iterate_fastq(f,f2,args.ncpu):
         res = p.map(func,chunks)
 
-        for r1_r2_lines,counter_tup in res:
+        for trimmed_r1_lines,trimmed_r2_lines,counter_tup in res:
 
             # unpack counters
             num_r1_primer_trimmed   +=  counter_tup[0]
@@ -641,73 +795,116 @@ def main(args):
             num_r1_r2_overlap       +=  counter_tup[3]
             num_too_short           +=  counter_tup[4]
             num_odd                 +=  counter_tup[5]
-            total_reads             +=  counter_tup[6]
+            num_bad_umi             +=  counter_tup[6]
+            total_reads             +=  counter_tup[7]
             
-            num_qual_trim_r1_bases  +=  counter_tup[7]
-            num_qual_trim_r2_bases  +=  counter_tup[8]        
-            num_qual_trim_r1        +=  counter_tup[9]
-            num_qual_trim_r2        +=  counter_tup[10]
+            num_qual_trim_r1_bases  +=  counter_tup[8]
+            num_qual_trim_r2_bases  +=  counter_tup[9]        
+            num_qual_trim_r1        +=  counter_tup[10]
+            num_qual_trim_r2        +=  counter_tup[11]
+
+            num_poly_trim_bases_primer += counter_tup[12]
+            num_poly_trim_primer       += counter_tup[13]
+            num_poly_trim_bases_umi    += counter_tup[14]
+            num_poly_trim_umi          += counter_tup[15]
             
-            num_CC                  +=  counter_tup[11]
-            num_TT                  +=  counter_tup[12]
-            num_NN                  +=  counter_tup[13]
-            num_no_duplex           +=  counter_tup[14]
+            
+            num_CC         +=  counter_tup[16]
+            num_TT         +=  counter_tup[17]
+            num_NN         +=  counter_tup[18]
+            num_no_duplex  +=  counter_tup[19]
 
+            num_after_trim +=  counter_tup[20]
 
-            for i in range(len(r1_r2_lines)):
-                trimmed_r1_lines  =  r1_r2_lines[i][0]
-                trimmed_r2_lines  =  r1_r2_lines[i][1]
-
-                f_out_r1.write(trimmed_r1_lines)
-                f_out_r1.write(b"\n")
-                f2_out_r2.write(trimmed_r2_lines)
-                f2_out_r2.write(b"\n")
-
+            f_out_r1.write(trimmed_r1_lines)
+            f_out_r1.write(b"\n")
+            f2_out_r2.write(trimmed_r2_lines)
+            f2_out_r2.write(b"\n")
+            
             nchunk += 1
             logger.info("Processed : {n} reads".format(n=total_reads))
             
     p.close()
     p.join()
 
-    
-    out_metrics = [
-        "Total read fragments : {tot_reads}",
-        "Num R1 reads primer trimmed : {num_r1_pr_trimmed}",
-        "Num R2 reads primer trimmed : {num_r2_pr_trimmed}",
-        "Num R1 reads synthetic side trimmed : {num_syn_trimmed}",
+
+    out_metrics_detail = [
+        "Num Primer side reads with primer identified : {num_r1_pr_trimmed}",
+        "Num Primer side reads with 3' synthetic oligo trimmed : {num_syn_trimmed}",
+        "Num UMI side reads with 3' synthetic oligo trimmed (including primer) : {num_r2_pr_trimmed}",        
         "Num read fragments overlapping : {num_overlap}",
-        "Num read fragments dropped too short (R1 or R2 < 50 bp after qual trimming) : {too_short}",
-        "Num read fragments dropped odd structure (usually R1 has only primer sequence) : {odd}",
-        "Avg num bases qual trimmed R1 : {qual_trim_r1}",
-        "Avg num bases qual trimmed R2 : {qual_trim_r2}",
-        "Num reads qual trimmed R1 : {num_qual_trim_r1}",
-        "Num reads qual trimmed R2 : {num_qual_trim_r2}",        
+        "Avg num Primer side bases qual trimmed : {qual_trim_r1}",
+        "Avg num UMI side bases qual trimmed : {qual_trim_r2}",
+        "Num Primer side reads qual trimmed : {num_qual_trim_r1}",
+        "Num UMI side reads qual trimmed : {num_qual_trim_r2}",
     ]
+    out_metrics = [
+        "Total read fragments : {tot_reads}".format(tot_reads = total_reads),
+        "Num read fragments after trimming : {num_after_trim}".format(num_after_trim = num_after_trim)
+    ]
+    out_metrics_dropped = [
+        "Num read fragments dropped too short : {too_short}".format(too_short = num_too_short),
+        "Num read fragments dropped odd structure (usually Primer side has only primer sequence) : {odd}".format(odd = num_odd)
+    ]
+    total_dropped = num_too_short + num_odd
+    
     if args.is_duplex:
         out_metrics.extend(
             ["Num CC reads : {num_CC}".format(num_CC = num_CC),
             "Num TT reads : {num_TT}".format(num_TT = num_TT),
-            "Num NN reads : {num_NN}".format(num_NN = num_NN),
-            "Num read fragments dropped (no duplex adapter) : {num_no_duplex}".format(num_no_duplex = num_no_duplex)]
+            "Num NN reads : {num_NN}".format(num_NN = num_NN)]
         )
-    out_metrics_lines = "\n".join(out_metrics).format(tot_reads = total_reads, num_r1_pr_trimmed = num_r1_primer_trimmed,
-                                                      num_r2_pr_trimmed = num_r2_primer_trimmed,
-                                                      num_syn_trimmed = num_r1_syn_trimmed,
-                                                      num_overlap = num_r1_r2_overlap,
-                                                      too_short = num_too_short,
-                                                      odd = num_odd,
-                                                      qual_trim_r1 = 0 if num_qual_trim_r1_bases == 0 else float(num_qual_trim_r1_bases)/(num_qual_trim_r1),
-                                                      qual_trim_r2 = 0 if num_qual_trim_r2_bases == 0 else float(num_qual_trim_r2_bases)/(num_qual_trim_r2),
-                                                      num_qual_trim_r1 = num_qual_trim_r1,
-                                                      num_qual_trim_r2 = num_qual_trim_r2)
+        out_metrics_dropped.extend([
+            "Num read fragments dropped (no duplex adapter) : {num_no_duplex}".format(
+                num_no_duplex = num_no_duplex)])
+        total_dropped += num_no_duplex
+        
+    if args.seqtype == "rna":
+        out_metrics_detail.extend(
+            ["Avg num bases {p1} trimmed Primer side :  {p1_trim}".format(p1 = args.poly_tail_primer_side,
+                                                                          p1_trim = 0 if num_poly_trim_bases_primer == 0 else \
+                                                                          float(num_poly_trim_bases_primer)/num_poly_trim_primer),
+             "Avg num bases {p2} trimmed UMI side : {p2_trim}".format(p2 = args.poly_tail_umi_side,
+                                                                      p2_trim = 0 if num_poly_trim_bases_umi == 0 else \
+                                                                       float(num_poly_trim_bases_umi)/num_poly_trim_umi),
+             "Num reads {p1} trimmed Primer side : {p1_trim}".format(p1 = args.poly_tail_primer_side,
+                                                                     p1_trim = num_poly_trim_primer),
+             "Num reads {p2} trimmed UMI side : {p2_trim}".format(p2 = args.poly_tail_umi_side,
+                                                                  p2_trim = num_poly_trim_umi)]
+        )
+        out_metrics_dropped.extend([
+            "Num read fragments dropped bad UMI : {bad_umi}".format(bad_umi = num_bad_umi)]
+        )
+        total_dropped += num_bad_umi        
+        
+    f_out_metrics_detail = open(args.out_metrics+".detail","w")
+    f_out_metrics        = open(args.out_metrics,"w")    
+                                                                          
+    out_metrics_lines_detail = "\n".join(out_metrics_detail).format(num_r1_pr_trimmed = num_r1_primer_trimmed,
+                                                                    num_r2_pr_trimmed = num_r2_primer_trimmed,
+                                                                    num_syn_trimmed = num_r1_syn_trimmed,
+                                                                    num_overlap = num_r1_r2_overlap,
+                                                                    qual_trim_r1 = 0 if num_qual_trim_r1_bases == 0 else \
+                                                                    float(num_qual_trim_r1_bases)/(num_qual_trim_r1),
+                                                                    qual_trim_r2 = 0 if num_qual_trim_r2_bases == 0 else \
+                                                                    float(num_qual_trim_r2_bases)/(num_qual_trim_r2),
+                                                                    num_qual_trim_r1 = num_qual_trim_r1,
+                                                                    num_qual_trim_r2 = num_qual_trim_r2)
                                                       
+    f_out_metrics_detail.write(out_metrics_lines_detail)
+    f_out_metrics_detail.write("\n")
+    
+    out_metrics.extend(out_metrics_dropped)
+    out_metrics_lines = "\n".join(out_metrics)
     f_out_metrics.write(out_metrics_lines)
     f_out_metrics.write("\n")
     
     close_fh(f,f2)
     close_fh(f_out_r1,f2_out_r2)
+    f_out_metrics_detail.close()
     f_out_metrics.close()
         
+    assert num_after_trim + total_dropped == total_reads, "Read accouting failed !"
     
 if __name__ == '__main__':
     main()
