@@ -20,7 +20,7 @@ class PrimerDataStruct(object):
         self.ncpu = kwargs["ncpu"]
         self.seqtype = kwargs["seqtype"]
 
-        self._primer_col = 6 if self.seqtype == "rna" else 3 # rna or dna primer file parsing
+        self._primer_col = 7 if self.seqtype == "rna" else 3 # rna or dna primer file parsing
 
     def _pairwise_align(self,idx):
         ''' Pairwise align two primers
@@ -51,6 +51,8 @@ class PrimerDataStruct(object):
         self._primer_clusters = collections.defaultdict(set)
         with open(self.primer_file,"r") as IN:
             for line in IN:
+                if line.startswith("gene.id"):
+                    continue
                 primer = line.strip("\n\r").split("\t")[self._primer_col]
                 if primer not in primers:
                     primers.append(primer)
@@ -74,11 +76,11 @@ class PrimerDataStruct(object):
         self._primer_kmers = collections.defaultdict(set)
         self._primer_info = collections.defaultdict(list) 
 
-        primer_id=1
+        primer_id=0
         with open(self.primer_file,"r") as IN:
             for line in IN:
                 contents = line.strip("\n\r").split("\t")
-                primer   = contents[-1]
+                primer   = contents[self._primer_col]
                 if primer in self._primer_info:
                     temp = [str(primer_id),contents,[]]
                     self._primer_info[primer].append(temp) # store exact matching primers in the same value bucket
