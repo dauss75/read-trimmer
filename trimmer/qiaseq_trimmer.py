@@ -28,7 +28,6 @@ class QiaSeqTrimmer(Trimmer):
         self._r2_info = None
 
         self.seqtype = kwargs["seqtype"]
-        self.synthetic_oligo_len = self.umi_len + self.common_seq_len
         
         # some duplex specific params
         self.tagname_duplex = kwargs["tagname_duplex"]
@@ -38,7 +37,8 @@ class QiaSeqTrimmer(Trimmer):
                                      b"GTTCTGAGCGAYYATAGGAGTCCT",b"ACGTTCTGAGCGAYYATAGGAGTCCT"]
         else:
             self._duplex_adapters = [b"TTCTGAGCGAYYATAGGAGTCCT"]
-        
+
+        self.synthetic_oligo_len = self.umi_len + self.common_seq_len if not self.is_duplex else None
 
     # boolean variables requested from this class
     @property
@@ -230,7 +230,7 @@ class QiaSeqTrimmer(Trimmer):
                 return            
             # update synthetic oligo len
             self._is_duplex_adapter_present = True
-            self.synthetic_oligo_len = 12 + (adapter_end_pos + 1) #(this can be updated again below if umi starts with a N, assuming fixed 12 b.p UMI)
+            self.synthetic_oligo_len = self.umi_len + (adapter_end_pos + 1)
             
         # get umi
         synthetic_oligo_len = self.synthetic_oligo_len        
@@ -295,7 +295,13 @@ class QiaSeqTrimmer(Trimmer):
             chrom,pos,strand,seq = temp[1]
             primer_info = chrom+"-"+strand+"-"+pos
         elif self.seqtype == "rna":
-            primer_info = temp[0] # use primer id
+            pr_id = []
+            # could have 2 or more primers with same sequence
+            # use primer id in info field
+            for p in primer_datastruct[0][primer]:
+                pr_id.append(p[0])
+            primer_info = ",".join(pr_id)
+            
         primer_error = str(editdist)
 
         # look for overlap on synthetic side , i.e. align endo seq from R2 on R1
@@ -399,32 +405,34 @@ def trim_custom_sequencing_adapter(args,buffers):
     :rtype tuple
     :returns (num_reads,True/False)
     '''
-    trim_obj = QiaSeqTrimmer(is_nextseq = args.is_nextseq,
-                             is_duplex = args.is_duplex,
-                             seqtype = args.seqtype,
-                             max_mismatch_rate_primer = args.max_mismatch_rate_primer,
-                             max_mismatch_rate_overlap = args.max_mismatch_rate_overlap,
-                             custom_seq_adapter = args.custom_seq_adapter,
-                             umi_len = args.umi_len,                             
-                             common_seq_len = args.common_seq_len,
-                             overlap_check_len = args.overlap_check_len,
-                             min_primer_side_len = args.min_primer_side_len,
-                             min_umi_side_len = args.min_umi_side_len,
-                             umi_filter_min_bq = args.umi_filter_min_bq,
-                             umi_filter_max_lowQ_bases = args.umi_filter_max_lowQ_bases,
-                             umi_filter_max_Ns = args.umi_filter_max_Ns,
-                             check_primer_side = args.check_primer_side,
-                             trim_custom_seq_adapter = False,
-                             poly_tail_primer_side = args.poly_tail_primer_side,
-                             poly_tail_umi_side = args.poly_tail_umi_side,
-                             primer3_R1 = args.primer3_bases_R1,
-                             primer3_R2 = args.primer3_bases_R2,
-                             tagname_duplex = args.tagname_duplex,
-                             tagname_umi = args.tagname_umi,
-                             tagname_primer = args.tagname_primer,
-                             tagname_primer_error = args.tagname_primer_error,
-                             tag_seperator = args.tag_seperator,
-                             no_tagnames = args.no_tagnames)
+    trim_obj = QiaSeqTrimmer(
+        is_nextseq                = args.is_nextseq,
+        is_duplex                 = args.is_duplex,
+        seqtype                   = args.seqtype,
+        max_mismatch_rate_primer  = args.max_mismatch_rate_primer,
+        max_mismatch_rate_overlap = args.max_mismatch_rate_overlap,
+        custom_seq_adapter        = args.custom_seq_adapter,
+        umi_len                   = args.umi_len,
+        common_seq_len            = args.common_seq_len,
+        overlap_check_len         = args.overlap_check_len,
+        min_primer_side_len       = args.min_primer_side_len,
+        min_umi_side_len          = args.min_umi_side_len,
+        umi_filter_min_bq         = args.umi_filter_min_bq,
+        umi_filter_max_lowQ_bases = args.umi_filter_max_lowQ_bases,
+        umi_filter_max_Ns         = args.umi_filter_max_Ns,
+        check_primer_side         = args.check_primer_side,
+        trim_custom_seq_adapter   = False,
+        primer3_R1                = args.primer3_bases_R1,
+        primer3_R2                = args.primer3_bases_R2,
+        poly_tail_primer_side     = args.poly_tail_primer_side,
+        poly_tail_umi_side        = args.poly_tail_umi_side,
+        tagname_duplex            = args.tagname_duplex,
+        tagname_umi               = args.tagname_umi,
+        tagname_primer            = args.tagname_primer,
+        tagname_primer_error      = args.tagname_primer_error,
+        tag_seperator             = args.tag_seperator,
+        no_tagnames               = args.no_tagnames
+    )
     
     buff_r1,buff_r2 = buffers
     r1_lines = buff_r1.split(b"\n")
@@ -466,7 +474,7 @@ def wrapper_func(args,buffer_):
         seqtype                   = args.seqtype,
         max_mismatch_rate_primer  = args.max_mismatch_rate_primer,
         max_mismatch_rate_overlap = args.max_mismatch_rate_overlap,
-        custom_seq_adapter        = args.custom_seq_adapter,                            
+        custom_seq_adapter        = args.custom_seq_adapter,
         umi_len                   = args.umi_len,
         common_seq_len            = args.common_seq_len,
         overlap_check_len         = args.overlap_check_len,
@@ -474,13 +482,13 @@ def wrapper_func(args,buffer_):
         min_umi_side_len          = args.min_umi_side_len,
         umi_filter_min_bq         = args.umi_filter_min_bq,
         umi_filter_max_lowQ_bases = args.umi_filter_max_lowQ_bases,
-        umi_filter_max_Ns         = args.umi_filter_max_Ns,                             
+        umi_filter_max_Ns         = args.umi_filter_max_Ns,
         check_primer_side         = args.check_primer_side,
         trim_custom_seq_adapter   = args.to_trim_custom_adapter,
         primer3_R1                = args.primer3_bases_R1,
         primer3_R2                = args.primer3_bases_R2,
         poly_tail_primer_side     = args.poly_tail_primer_side,
-        poly_tail_umi_side        = args.poly_tail_umi_side,  
+        poly_tail_umi_side        = args.poly_tail_umi_side,
         tagname_duplex            = args.tagname_duplex,
         tagname_umi               = args.tagname_umi,
         tagname_primer            = args.tagname_primer,
