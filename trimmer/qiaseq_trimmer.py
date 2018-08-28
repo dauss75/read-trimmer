@@ -324,7 +324,7 @@ class QiaSeqTrimmer(Trimmer):
                 else:
                     r2_trim_end = primer_side_overlap_end + 1 + num_primer_bases_R2 # python will truncate to string end pos if we overflow the length
             else: # use syn side coordinates
-                r2_trim_end = self.synthetic_oligo_len + (syn_side_overlap_end - r1_primer_end_pos) + 1 + num_primer_bases_R2
+                r2_trim_end = self.synthetic_oligo_len + (syn_side_overlap_end - r1_primer_end_pos) + num_primer_bases_R2
         else:
             if primer_side_overlap:
                 # use primer side coordinates for trimming            
@@ -842,10 +842,10 @@ def main(args):
         "{num_syn_trimmed}\tNum Primer side reads with 3' synthetic oligo trimmed",
         "{num_r2_pr_trimmed}\tNum UMI side reads with 3' synthetic oligo trimmed (including primer)",
         "{num_overlap}\tNum read fragments overlapping",
+        "{num_qual_trim_r1}\tNum Primer side reads qual trimmed",
+        "{num_qual_trim_r2}\tNum UMI side reads qual trimmed",        
         "{qual_trim_r1}\tAvg num Primer side bases qual trimmed",
         "{qual_trim_r2}\tAvg num UMI side bases qual trimmed",
-        "{num_qual_trim_r1}\tNum Primer side reads qual trimmed",
-        "{num_qual_trim_r2}\tNum UMI side reads qual trimmed",
     ]
     out_metrics_dropped = [
         "{too_short}\tNum read fragments dropped too short".format(too_short = num_too_short),
@@ -864,15 +864,19 @@ def main(args):
         total_dropped += num_no_duplex
         
     if args.seqtype == "rna":
-        out_metrics.extend(
-            ["{p1_trim}\tAvg num bases {p1} trimmed Primer side".format(p1 = args.poly_tail_primer_side,
-                                                                        p1_trim = 0 if num_poly_trim_bases_primer == 0 else \
-                                                                        round(float(num_poly_trim_bases_primer)/num_poly_trim_primer,2)),
-             "{p2_trim}\tAvg num bases {p2} trimmed UMI side".format(p2 = args.poly_tail_umi_side,
-                                                                     p2_trim = 0 if num_poly_trim_bases_umi == 0 else \
-                                                                     round(float(num_poly_trim_bases_umi)/num_poly_trim_umi,2)),
-             "{p1_trim}\tNum reads {p1} trimmed Primer side".format(p1 = args.poly_tail_primer_side, p1_trim = num_poly_trim_primer),
-             "{p2_trim}\tNum reads {p2} trimmed UMI side".format(p2 = args.poly_tail_umi_side,p2_trim = num_poly_trim_umi)])
+        if args.poly_tail_primer_side != "none":
+            out_metrics.extend(
+                ["{p1_trim}\tAvg num bases {p1} trimmed Primer side".format(p1 = args.poly_tail_primer_side,
+                                                                            p1_trim = 0 if num_poly_trim_bases_primer == 0 else \
+                                                                            round(float(num_poly_trim_bases_primer)/num_poly_trim_primer,2)),
+                 "{p1_trim}\tNum reads {p1} trimmed Primer side".format(p1 = args.poly_tail_primer_side, p1_trim = num_poly_trim_primer)])
+        if args.poly_tail_umi_side != "none":
+            out_metrics.extend(
+                ["{p2_trim}\tAvg num bases {p2} trimmed UMI side".format(p2 = args.poly_tail_umi_side,
+                                                                         p2_trim = 0 if num_poly_trim_bases_umi == 0 else \
+                                                                         round(float(num_poly_trim_bases_umi)/num_poly_trim_umi,2)),
+                 "{p2_trim}\tNum reads {p2} trimmed UMI side".format(p2 = args.poly_tail_umi_side,p2_trim = num_poly_trim_umi)])
+
 
         out_metrics_dropped.extend([
             "{bad_umi}\tNum read fragments dropped bad UMI".format(bad_umi = num_bad_umi)]
