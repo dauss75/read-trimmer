@@ -61,7 +61,11 @@ class PrimerDataStruct(object):
                             for i in range(0,len(primers)))
 
         p = multiprocessing.Pool(self.ncpu)
-        for res in p.imap(self._pairwise_align,pairwise_indices,chunksize=int(len(primers)/self.ncpu)):
+        chunksize = int(len(primers)/self.ncpu)
+        if chunksize < 1:
+            chunksize = 2
+
+        for res in p.imap(self._pairwise_align,pairwise_indices,chunksize=chunksize):
             if res[0] == -1:
                 continue
             shorter_primer,longer_primer = res
