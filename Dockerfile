@@ -6,7 +6,7 @@ FROM python:stretch
 RUN pip3 install edlib Cython
 
 # Initial installation of the trimming code
-RUN git clone https://github.com/qiaseq/read-trimmer && cd read-trimmer && python3 setup.py build_ext --inplace
+RUN git clone https://github.com/reineckef/read-trimmer && cd read-trimmer && python3 setup.py build_ext --inplace
 
 # install the wrapper script that will run updates before the actual trimming
 RUN echo '#!/bin/bash\n\
