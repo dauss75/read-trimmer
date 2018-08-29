@@ -336,7 +336,9 @@ class QiaSeqTrimmer(Trimmer):
                 
         # update r1,r2 qual and sequence
         if self.primer3_R1 == -1: # no primer bases to trim
-            r1_trim_start = r1_primer_end_pos + 1
+            r1_trim_start = r1_primer_end_pos - len(primer) + 1 # only trim extra bases upstream of the primer's 5'
+            if r1_trim_start < 0: # if the primer is lacking some bases of its 5', then this can be < 0
+                r1_trim_start = 0 # keep all bases in these cases
         else:
             r1_trim_start = r1_primer_end_pos - self.primer3_R1 + 1
         r2_trim_start = self.synthetic_oligo_len
