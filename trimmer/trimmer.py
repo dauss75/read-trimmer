@@ -5,6 +5,7 @@ import itertools
 import re
 import edlib
 import os
+import pickle
 import multiprocessing
 
 from _utils import quality_trim
@@ -19,8 +20,7 @@ class PrimerDataStruct(object):
         self.k = kwargs["k"]
         self.ncpu = kwargs["ncpu"]
         self.seqtype = kwargs["seqtype"]
-
-        self._primer_col = 7 if self.seqtype == "rna" else 3 # rna or dna primer file parsing
+        self.primer_col = kwargs["primer_col"]
 
     def _pairwise_align(self,idx):
         ''' Pairwise align two primers
@@ -51,9 +51,9 @@ class PrimerDataStruct(object):
         self._primer_clusters = collections.defaultdict(set)
         with open(self.primer_file,"r") as IN:
             for line in IN:
-                if line.startswith("gene.id"):
+                if line.startswith("#"):
                     continue
-                primer = line.strip("\n\r").split("\t")[self._primer_col]
+                primer = line.strip("\n\r").split("\t")[self.primer_col]
                 if primer not in primers:
                     primers.append(primer)
 
@@ -72,7 +72,7 @@ class PrimerDataStruct(object):
             self._primer_clusters[shorter_primer].add(longer_primer)
             self._primer_clusters[longer_primer].add(shorter_primer)
         p.close()
-        p.join()                    
+        p.join()           
             
     def _create_primer_search_datastruct(self):
         ''' Create k-mer index on the primers
@@ -83,8 +83,10 @@ class PrimerDataStruct(object):
         primer_id=0
         with open(self.primer_file,"r") as IN:
             for line in IN:
+                if line.startswith("#"):
+                    continue
                 contents = line.strip("\n\r").split("\t")
-                primer   = contents[self._primer_col]
+                primer   = contents[self.primer_col]
                 if primer in self._primer_info:
                     temp = [str(primer_id),contents,[]]
                     self._primer_info[primer].append(temp) # store exact matching primers in the same value bucket
@@ -106,11 +108,16 @@ class PrimerDataStruct(object):
                 self._primer_info[p1][0][2].append(p2)
 
     @property
-    def primer_search_datastruct(self):
+    def primer_search_datastruct(self,save_cache=True,load_cache=True):
         '''
         '''
+        if load_cache:
+            if os.path.exists(self.primer_file+".index.cache"):
+                return pickle.load(open(self.primer_file+".index.cache","rb"))        
         self._cluster_primer_seqs()
         self._create_primer_search_datastruct()
+        if save_cache:
+            pickle.dump((self._primer_info,self._primer_kmers),open(self.primer_file+".index.cache","wb"))
         return (self._primer_info,self._primer_kmers)
 
 class Trimmer(object):
