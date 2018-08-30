@@ -450,11 +450,7 @@ def trim_custom_sequencing_adapter(args,buffers):
             r1_seq,r2_seq = line
         elif i % 4 == 0: # qual
             num_reads+=1
-            if args.custom_seq_adapter_side == "primer":
-                seq = r1_seq
-            else:
-                seq = r2_seq
-            if trim_obj.custom_sequencing_adapter_check(seq) != -1:
+            if trim_obj.custom_sequencing_adapter_check(r1_seq) != -1:
                 num_reads_have_adapter += 1                
         i+=1
     return (num_reads,float(num_reads_have_adapter)/num_reads > 0.95)
@@ -736,7 +732,8 @@ def main(args):
     global primer_datastruct
     
     primer_datastruct = PrimerDataStruct(k=8,primer_file=args.primer_file,
-                                         ncpu=args.ncpu,seqtype=args.seqtype).primer_search_datastruct
+                                         ncpu=args.ncpu,seqtype=args.seqtype,
+                                         primer_col=args.primer_col).primer_search_datastruct
     l = multiprocessing.Lock()
 
     logger.info("\n{}\n".format("--"*10))

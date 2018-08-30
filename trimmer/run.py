@@ -25,6 +25,9 @@ def init_parser():
     parser.add_argument("--primer_file", required = True,
                         help = "Primer file with 3' coordinates" )
     
+    parser.add_argument("--primer_col", required = True, type = int,
+                        help = "0-based Column number with primer sequence in the Primer file")
+    
     parser.add_argument("--seqtype", default = "dna", const = "dna",
                         nargs = "?", choices = ["dna","rna"],
                         help = "Sequencing type : dna/rna. Default : %(default)s")
@@ -42,11 +45,6 @@ def init_parser():
     
     parser.add_argument("--custom_seq_adapter", default = "AATGTACAGTATTGCGTTTTG",
                         help = "The custom sequencing adapter used in library preperation. Default : %(default)s")
-    
-    parser.add_argument("--custom_seq_adapter_side", default = "primer", const = "primer",
-                        nargs = "?", choices = ["primer","umi"],
-                        help = "Choose which side the (on the 5' end) the custom sequencing adapter"\
-                        "is(if present). Default : %(default)s")
     
     parser.add_argument("--trim_custom_seq_adapter", action = "store_true",
                         help = "Choose this flag to trim custom sequencing adapter."\
