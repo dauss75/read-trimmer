@@ -728,6 +728,7 @@ def main(args):
     args.tagname_umi          = args.tagname_umi.encode("ascii")
     args.tagname_duplex       = args.tagname_duplex.encode("ascii")
     args.tag_seperator        = args.tag_seperator.encode("ascii")
+    args.custom_seq_adapter   = args.custom_seq_adapter.encode("ascii")
 
     global primer_datastruct
     
