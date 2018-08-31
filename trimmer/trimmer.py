@@ -22,6 +22,9 @@ class PrimerDataStruct(object):
         self.seqtype = kwargs["seqtype"]
         self.primer_col = kwargs["primer_col"]
 
+        self.save_cache = True if not "save_cache" in kwargs else True
+        self.load_cache = True if not "load_cache" in kwargs else True
+
     def _pairwise_align(self,idx):
         ''' Pairwise align two primers
         :param tuple idx: (i,j) , the indices of the two primers to align
@@ -108,15 +111,15 @@ class PrimerDataStruct(object):
                 self._primer_info[p1][0][2].append(p2)
 
     @property
-    def primer_search_datastruct(self,save_cache=True,load_cache=True):
+    def primer_search_datastruct(self):
         '''
         '''
-        if load_cache:
+        if self.load_cache:
             if os.path.exists(self.primer_file+".index.cache"):
                 return pickle.load(open(self.primer_file+".index.cache","rb"))        
         self._cluster_primer_seqs()
         self._create_primer_search_datastruct()
-        if save_cache:
+        if self.save_cache:
             pickle.dump((self._primer_info,self._primer_kmers),open(self.primer_file+".index.cache","wb"))
         return (self._primer_info,self._primer_kmers)
 
