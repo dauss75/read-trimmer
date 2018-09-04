@@ -393,12 +393,12 @@ class QiaSeqTrimmer(Trimmer):
 
         # avoid empty reads
         if len(r1_seq) == 0:
-            r1_seq = 'N'
-            r1_qual = '!'
+            r1_seq = b'N'
+            r1_qual = b'!'
         
         if len(r2_seq) == 0:
-            r2_seq = 'N'
-            r2_qual = '!'
+            r2_seq = b'N'
+            r2_qual = b'!'
         
         # update read info tuple
         self._r1_info = (r1_id,r1_seq,r1_qual)
