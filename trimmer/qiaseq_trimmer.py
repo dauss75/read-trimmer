@@ -265,7 +265,16 @@ class QiaSeqTrimmer(Trimmer):
         r1_qual = r1_qual[0:r1_qual_end]
         r2_seq  = r2_seq[0:r2_qual_end]
         r2_qual = r2_qual[0:r2_qual_end]        
-                    
+
+        # avoid empty reads
+        if len(r1_seq) == 0:
+            r1_seq = b"N"
+            r1_qual = b"!"
+        
+        if len(r2_seq) == 0:
+            r2_seq = b"N"
+            r2_qual = b"!"
+
         if len(r1_seq) < self.min_primer_side_len or len(r2_seq) < self.min_umi_side_len: # skip reads too short after qual trimming
             self._is_too_short = True
             self.synthetic_oligo_len = synthetic_oligo_len
