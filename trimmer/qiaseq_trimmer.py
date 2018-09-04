@@ -268,12 +268,12 @@ class QiaSeqTrimmer(Trimmer):
 
         # avoid empty reads
         if len(r1_seq) == 0:
-            r1_seq = b"N"
-            r1_qual = b"!"
+            r1_seq = 'N'
+            r1_qual = '!'
         
         if len(r2_seq) == 0:
-            r2_seq = b"N"
-            r2_qual = b"!"
+            r2_seq = 'N'
+            r2_qual = '!'
 
         if len(r1_seq) < self.min_primer_side_len or len(r2_seq) < self.min_umi_side_len: # skip reads too short after qual trimming
             self._is_too_short = True
