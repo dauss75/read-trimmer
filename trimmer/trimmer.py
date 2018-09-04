@@ -5,6 +5,7 @@ import itertools
 import re
 import edlib
 import os
+import pickle
 import multiprocessing
 
 from _utils import quality_trim
@@ -19,8 +20,10 @@ class PrimerDataStruct(object):
         self.k = kwargs["k"]
         self.ncpu = kwargs["ncpu"]
         self.seqtype = kwargs["seqtype"]
+        self.primer_col = kwargs["primer_col"]
 
-        self._primer_col = 7 if self.seqtype == "rna" else 3 # rna or dna primer file parsing
+        self.save_cache = True if not "save_cache" in kwargs else True
+        self.load_cache = True if not "load_cache" in kwargs else True
 
     def _pairwise_align(self,idx):
         ''' Pairwise align two primers
@@ -51,9 +54,9 @@ class PrimerDataStruct(object):
         self._primer_clusters = collections.defaultdict(set)
         with open(self.primer_file,"r") as IN:
             for line in IN:
-                if line.startswith("gene.id"):
+                if line.startswith("#"):
                     continue
-                primer = line.strip("\n\r").split("\t")[self._primer_col]
+                primer = line.strip("\n\r").split("\t")[self.primer_col]
                 if primer not in primers:
                     primers.append(primer)
 
@@ -72,7 +75,7 @@ class PrimerDataStruct(object):
             self._primer_clusters[shorter_primer].add(longer_primer)
             self._primer_clusters[longer_primer].add(shorter_primer)
         p.close()
-        p.join()                    
+        p.join()           
             
     def _create_primer_search_datastruct(self):
         ''' Create k-mer index on the primers
@@ -83,8 +86,10 @@ class PrimerDataStruct(object):
         primer_id=0
         with open(self.primer_file,"r") as IN:
             for line in IN:
+                if line.startswith("#"):
+                    continue
                 contents = line.strip("\n\r").split("\t")
-                primer   = contents[self._primer_col]
+                primer   = contents[self.primer_col]
                 if primer in self._primer_info:
                     temp = [str(primer_id),contents,[]]
                     self._primer_info[primer].append(temp) # store exact matching primers in the same value bucket
@@ -109,8 +114,15 @@ class PrimerDataStruct(object):
     def primer_search_datastruct(self):
         '''
         '''
+        if self.load_cache:
+            if os.path.exists(self.primer_file+".index.cache"):
+                with open(self.primer_file+".index.cache","rb") as cache:
+                    return pickle.load(cache)
         self._cluster_primer_seqs()
         self._create_primer_search_datastruct()
+        if self.save_cache:
+            with open(self.primer_file+".index.cache","wb") as cache:
+                pickle.dump((self._primer_info,self._primer_kmers),cache)
         return (self._primer_info,self._primer_kmers)
 
 class Trimmer(object):
@@ -217,9 +229,6 @@ class Trimmer(object):
         
         for primer in candidates:
             primer_len = len(primer)
-            if r1_seq[0:primer_len] == primer and num_candidates == 1: # exact match and no other primers to check
-                return (primer_len,primer,0,0)
-            
             alignment = edlib.align(primer,r1_seq[0:len(primer)+self._padding],mode="SHW")
             editdist  = alignment["editDistance"]
             score     = float(editdist)/primer_len
