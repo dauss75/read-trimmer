@@ -116,11 +116,13 @@ class PrimerDataStruct(object):
         '''
         if self.load_cache:
             if os.path.exists(self.primer_file+".index.cache"):
-                return pickle.load(open(self.primer_file+".index.cache","rb"))        
+                with open(self.primer_file+".index.cache","rb") as cache:
+                    return pickle.load(cache)
         self._cluster_primer_seqs()
         self._create_primer_search_datastruct()
         if self.save_cache:
-            pickle.dump((self._primer_info,self._primer_kmers),open(self.primer_file+".index.cache","wb"))
+            with open(self.primer_file+".index.cache","wb") as cache:
+                pickle.dump((self._primer_info,self._primer_kmers),cache)
         return (self._primer_info,self._primer_kmers)
 
 class Trimmer(object):
@@ -227,9 +229,6 @@ class Trimmer(object):
         
         for primer in candidates:
             primer_len = len(primer)
-            if r1_seq[0:primer_len] == primer and num_candidates == 1: # exact match and no other primers to check
-                return (primer_len,primer,0,0)
-            
             alignment = edlib.align(primer,r1_seq[0:len(primer)+self._padding],mode="SHW")
             editdist  = alignment["editDistance"]
             score     = float(editdist)/primer_len
