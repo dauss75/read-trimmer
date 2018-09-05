@@ -404,15 +404,6 @@ class QiaSeqTrimmer(Trimmer):
         r1_id = self._reformat_readid(r1_id,umi,primer_info,primer_error)
         r2_id = self._reformat_readid(r2_id,umi,primer_info,primer_error)
 
-        # avoid empty reads
-        if len(r1_seq) == 0:
-            r1_seq = b'N'
-            r1_qual = b'!'
-        
-        if len(r2_seq) == 0:
-            r2_seq = b'N'
-            r2_qual = b'!'
-        
         # reset variable
         self.synthetic_oligo_len = synthetic_oligo_len
 
