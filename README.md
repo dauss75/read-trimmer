@@ -34,8 +34,15 @@ and run:
 docker build -t qiaseq/read-trimmer .
 ```
 
+To use the forked (alpha) code from my fork of the main repository, 
+you can change that by setting the repository name at build-time:
+
+```
+docker build -t qiaseq/read-trimmer-fork --build-arg repository=reineckef .
+```
+
 And then, run the trimming code inside the container:
 
 ```
-docker run qiaseq/read-trimmer [ options ]
+docker run qiaseq/read-trimmer[-fork] [ options ]
 ```
