@@ -283,11 +283,24 @@ class QiaSeqTrimmer(Trimmer):
             r2_id = self._reformat_readid(r2_id,umi,primer_id,primer_error)
             # just trim synthetic part on R2
             r2_seq = r2_seq[self.synthetic_oligo_len:]
-            r2_qual = r2_qual[self.synthetic_oligo_len:]            
+            r2_qual = r2_qual[self.synthetic_oligo_len:]
+            # update read info tuple
             self._r1_info = (r1_id,r1_seq,r1_qual)
             self._r2_info = (r2_id,r2_seq,r2_qual)
-            self.synthetic_oligo_len = synthetic_oligo_len            
-            return
+            # reset var
+            self.synthetic_oligo_len = synthetic_oligo_len
+
+            # check r2 length
+            if len(r2_seq) < self.min_umi_side_len:
+                self._is_too_short = True
+                return
+            if len(r2_seq) == 0: # min_umi_side_len is 0
+                # add dummy sequence so as not to fail downstream
+                r2_seq = b"N"
+                r2_qual = b"!"
+                self._r1_info = (r1_id,r1_seq,r1_qual)
+                self._r2_info = (r2_id,r2_seq,r2_qual)
+                return
         
         # set annotation for primer tag
         temp = primer_datastruct[0][primer][0]
