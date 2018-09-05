@@ -18,7 +18,7 @@ RUN git clone https://github.com/${repository}/read-trimmer && cd read-trimmer &
 RUN echo '#!/bin/bash\n\
 echo "# [$(date)] Running code updates ..."\n\
 cd /read-trimmer\n\
-git pull --depth 1 origin master\n\
+git pull origin master\n\
 python3 setup.py build_ext --inplace\n\
 echo "# [$(date)] Code updated."\n\
 python3 /read-trimmer/trimmer/run.py "$@"' > /trim
